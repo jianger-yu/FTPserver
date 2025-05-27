@@ -90,6 +90,7 @@ void *pthread_pool::consumer(pthread_pool* pool){
         // 拿取任务
         task *mytask;
         mytask = pool->task_queue;
+        if(mytask == NULL) continue;
         pool->task_queue = pool->task_queue->next;
         // 拿完任务直接解锁
         pthread_mutex_unlock(&pool->lock);
@@ -97,6 +98,7 @@ void *pthread_pool::consumer(pthread_pool* pool){
         // 执行任务
         mytask->function();
         delete mytask;
+        mytask = NULL;
     }
     return NULL;
 }
@@ -128,7 +130,7 @@ void pthread_pool::PushTask(Func&& func, Args&&... args) {
         std::forward<Args>(args)...
     );*/
     task* NewTask = new task(std::forward<Func>(func), std::forward<Args>(args)...);
-
+    NewTask->next = NULL;
     pthread_mutex_lock(&this->lock); // 上锁，写入公共空间
 
     if (this->task_queue == NULL){

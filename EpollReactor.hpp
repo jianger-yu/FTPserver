@@ -14,6 +14,7 @@
 #include <sys/epoll.h>
 #include <ctype.h>
 #include <time.h>
+#include <queue>
 #include "ThreadPool.hpp"
 
 #define MAX_EVENTS 1024     //监听上限数
@@ -44,7 +45,9 @@ typedef struct event{
     int epfd;   //红黑树的句柄
     event r_events[MAX_EVENTS + 1];
     pthread_pool pthpool;
-    pthread_mutex_t event_mutex; // 锁
+    pthread_mutex_t event_mutex; // ac锁
+    std::queue<EventContext*> evq;
+
     //删除树上节点
     void eventdel(event * ev);
     
@@ -85,7 +88,6 @@ public:
 
 void readctor::eventdel(event * ev){
     struct epoll_event epv = {0,{0}};
-    
     if(ev -> status != 1)  //不在红黑树上
         return;
     
@@ -131,9 +133,10 @@ void readctor::acceptconn(int lfd,int tmp, void * arg){
     pthread_mutex_unlock(&event_mutex); // 解锁
 
     printf("new connect [%s:%d][time:%ld], pos[%d]\n",
-            inet_ntoa(caddr.sin_addr),ntohs(caddr.sin_port), r_events[i].last_active, i);
+    inet_ntoa(caddr.sin_addr),ntohs(caddr.sin_port), r_events[i].last_active, i);
     return;
 }
+
 bool send_all(int sockfd,const void * buf,size_t len){
   const char*p = static_cast<const char*>(buf);
   while(len > 0){
@@ -149,11 +152,14 @@ bool recv_all(int sockfd,void * buf,size_t len){
   char* p = static_cast<char*>(buf);
   int n;
   while(len > 0){
-    do n = recv(sockfd,p,len,0);
-    while(n == -1 && errno == EAGAIN);
-    if(n <= 0) return false;
-    p += n;
-    len -= n;
+    do {
+        n = recv(sockfd,p,len,0);
+        if (n > 0) { p += n; len -= n; }
+        else if (n == 0) break; // 对端关闭
+        else if (errno != EAGAIN && errno != EWOULDBLOCK) return false; 
+    }
+    while(n > 0);
+    //if(!(errno == EAGAIN || errno == EWOULDBLOCK)) return false; 
   }
   return true;
 }
@@ -180,15 +186,22 @@ void readctor::senddata(int fd,int tmp, void * arg){
     event * ev = (event*)arg;
     int len;
     std::string str = ev->buf;
-    if(sendMsg(str, fd) == -1){
+    int ret = sendMsg(str, fd);
+
+    pthread_mutex_lock(&event_mutex); // 加锁
+    if(ret == -1){
         close(ev->fd);
         printf("send[fd = %d] , len = %ld, error %s\n",fd,str.size(),strerror(errno));
     }
     eventdel(ev);
     
     printf("send[fd = %d],[%ld]%s\n",fd,str.size(),ev->buf);
+
     eventset(ev,fd,&readctor::recvdata,ev);
     eventadd(EPOLLIN, ev);   
+
+    pthread_mutex_unlock(&event_mutex); // 解锁
+
 }
 
 
@@ -197,10 +210,13 @@ void readctor::recvdata(int fd, int events, void*arg){
     event *ev = (event *) arg;
     int len;
     std::string str;
+    int ret = recvMsg(str, fd);
 
-    if(recvMsg(str, fd) == -1){
+    pthread_mutex_lock(&event_mutex); // 加锁
+    if(ret == -1){
         close(ev->fd);
         printf("recv[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
+        return;
     }
     strcpy(ev->buf,str.c_str());
     len = str.size();
@@ -214,6 +230,7 @@ void readctor::recvdata(int fd, int events, void*arg){
 
         eventset(ev,fd,&readctor::senddata,ev);    //设置该fd对应的回调函数为senddata
         eventadd(EPOLLOUT, ev);         //将fd加入红黑树中，监听其写事件
+
     } else if(len == 0){//对端已关闭
         close(ev->fd);
         printf("[fd = %d] pos[%ld], closed\n", fd, ev-r_events);
@@ -221,6 +238,8 @@ void readctor::recvdata(int fd, int events, void*arg){
         close(ev->fd);
         printf("recv[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
     }
+
+    pthread_mutex_unlock(&event_mutex); // 解锁
 }
 
 //初始化事件
@@ -232,18 +251,18 @@ void readctor::eventset(event * ev, int fd, void (readctor::* call_back)(int ,in
     ev -> events = 0;
     ev -> status = 0; 
     ev -> last_active = time(NULL);     //调用eventset函数的时间
-
     return;
 }
 
 //添加文件描述符到红黑树
 void readctor::eventadd(int events, event * ev){
     //事件处理采用ET模式
-    events |= EPOLLET;
+    int combined_events = events | EPOLLET;
+    //events |= EPOLLET;
     struct epoll_event epv = { 0 , { 0 }};
     int op = EPOLL_CTL_MOD;
     epv.data.ptr = ev;
-    epv.events = ev -> events = events;
+    epv.events = ev -> events = combined_events;
 
     if(ev -> status == 0){      //若ev不在树内
         op = EPOLL_CTL_ADD;
@@ -251,14 +270,14 @@ void readctor::eventadd(int events, event * ev){
     }
     else{
         if(epoll_ctl(epfd,op,ev -> fd, &epv) < 0)
-            printf("epoll_ctl  mod is error :[fd = %d], events[%d]\n", ev->fd, events);
+            printf("epoll_ctl  mod is error :[fd = %d], events[%d]\n", ev->fd, combined_events);
         else
-            printf("epoll_ctl mod sccess on [fd = %d], [op = %d] events[%0X]\n",ev->fd, op, events);
+            printf("epoll_ctl mod sccess on [fd = %d], [op = %d] events[%0X]\n",ev->fd, op, combined_events);
     }
     if(epoll_ctl(epfd, op, ev -> fd, &epv) < 0)
-        printf("epoll_ctl is error :[fd = %d], events[%d]\n", ev->fd, events);
+        printf("epoll_ctl is error :[fd = %d], events[%d]\n", ev->fd, combined_events);
     else
-        printf("epoll_ctl sccess on [fd = %d], [op = %d] events[%0X]\n",ev->fd, op, events);
+        printf("epoll_ctl sccess on [fd = %d], [op = %d] events[%0X]\n",ev->fd, op, combined_events);
 }
 
 //初始化监听socket
@@ -305,8 +324,10 @@ void readctor::readctorinit(unsigned short port){
             long duration = now -r_events[chekckpos].last_active;   //计算客户端不活跃的时间
             if(duration >= 60){
                 printf("[fd = %d] timeout\n", r_events[chekckpos].fd);
+                pthread_mutex_lock(&event_mutex); // 加锁
                 eventdel(&r_events[chekckpos]);
                 close(r_events[chekckpos].fd);
+                pthread_mutex_unlock(&event_mutex); // 加锁
             }
         }
         //↑↑↑超时验证
@@ -321,15 +342,22 @@ void readctor::readctorinit(unsigned short port){
             event *ev = (event *) events[i].data.ptr;
             //读事件，调用读回调
             if((events[i].events & EPOLLIN) && (ev -> events & EPOLLIN)){
-                struct EventContext ctx = {ev,this};
-                pthpool.PushTask(event_callback_wrapper, &ctx);
+                //struct EventContext ctx = {ev,this};
+                struct EventContext* ctx = (struct EventContext*)malloc(sizeof (struct EventContext));
+                ctx->ev = ev;
+                ctx->obj = this;
+                evq.push(ctx);
+                pthpool.PushTask(event_callback_wrapper, ctx);
             }
             //写事件，调用写回调
             if((events[i].events & EPOLLOUT) && (ev -> events & EPOLLOUT)){
                 /*auto ctx = new EventContext{ev, this};
                 pthpool.PushTask(event_callback_wrapper, ctx);*/
-                struct EventContext ctx = {ev,this};
-                pthpool.PushTask(event_callback_wrapper, &ctx);
+                struct EventContext* ctx = (struct EventContext*)malloc(sizeof (struct EventContext));
+                ctx->ev = ev;
+                ctx->obj = this;
+                evq.push(ctx);
+                pthpool.PushTask(event_callback_wrapper, ctx);
             }
         }
     }
@@ -375,4 +403,9 @@ readctor::~readctor() {
         listen_ev.fd = -1;
     }
 
+    //释放队列
+    while(!evq.empty()){
+        free(evq.front());
+        evq.pop();
+    }
 }
