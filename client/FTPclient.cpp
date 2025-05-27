@@ -50,7 +50,8 @@ int main(){
 
   while(1){
     memset(buf, 0, sizeof buf);
-    read(STDIN_FILENO,buf,1024);
+    int ret = read(STDIN_FILENO,buf,1024);
+    buf[ret] = '\0';
     str = buf;
     sk.sendMsg(str);
 

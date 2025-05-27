@@ -44,7 +44,7 @@ typedef struct event{
     int epfd;   //红黑树的句柄
     event r_events[MAX_EVENTS + 1];
     pthread_pool pthpool;
-
+    pthread_mutex_t event_mutex; // 锁
     //删除树上节点
     void eventdel(event * ev);
     
@@ -100,7 +100,7 @@ void readctor::acceptconn(int lfd,int tmp, void * arg){
     struct sockaddr_in caddr;
     socklen_t len = sizeof caddr;
     int cfd, i;
-    
+    pthread_mutex_lock(&event_mutex); // 加锁
     if((cfd = accept(lfd, (struct sockaddr *)&caddr,&len)) == -1){
         if(errno != EAGAIN && errno != EINTR){
             //暂时不做出错处理
@@ -127,6 +127,8 @@ void readctor::acceptconn(int lfd,int tmp, void * arg){
         eventset(&r_events[i], cfd, &readctor::recvdata, &r_events[i]);
         eventadd(EPOLLIN, &r_events[i]);
     }while(0);
+
+    pthread_mutex_unlock(&event_mutex); // 解锁
 
     printf("new connect [%s:%d][time:%ld], pos[%d]\n",
             inet_ntoa(caddr.sin_addr),ntohs(caddr.sin_port), r_events[i].last_active, i);
@@ -184,7 +186,7 @@ void readctor::senddata(int fd,int tmp, void * arg){
     }
     eventdel(ev);
     
-    printf("send[fd = %d],[%d]%s\n",fd,len,ev->buf);
+    printf("send[fd = %d],[%ld]%s\n",fd,str.size(),ev->buf);
     eventset(ev,fd,&readctor::recvdata,ev);
     eventadd(EPOLLIN, ev);   
 }
@@ -201,7 +203,7 @@ void readctor::recvdata(int fd, int events, void*arg){
         printf("recv[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
     }
     strcpy(ev->buf,str.c_str());
-    ev->len = str.size() - 1;
+    len = str.size();
 
     eventdel(ev);//将该节点从红黑树摘除
 
@@ -281,7 +283,7 @@ void readctor::InitListenSocket(unsigned short port){
 
 
 void readctor::readctorinit(unsigned short port){
-
+    pthread_mutex_init(&event_mutex,NULL);
     epfd = epoll_create(MAX_EVENTS + 1);            //定义最大节点数为MAX_EVENTS + 1的红黑树
     if(epfd <= 0)
         printf("epfd create is error, epfd : %d\n", epfd);
@@ -344,6 +346,7 @@ readctor::readctor(unsigned short port){
 }   
 
 readctor::~readctor() {
+    pthread_mutex_destroy(&event_mutex);
     // 1. 停止线程池并等待所有任务完成
     pthpool.~pthread_pool(); // 调用线程池析构函数（若线程池未自动管理，可显式停止）
     
