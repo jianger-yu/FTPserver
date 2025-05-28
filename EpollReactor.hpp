@@ -181,9 +181,15 @@ int recvMsg(std::string& msg,int sockfd_) {
   return 0;
 }
 
-//写回调
+//处理回调
 void readctor::senddata(int fd,int tmp, void * arg){
     event * ev = (event*)arg;
+    if(strcmp(ev->buf,"PASV") == 0){
+        //用户请求被动模式，应开一个数据传输线程
+        //并将生成的端口号告知客户端控制线程，返回 227 entering passive mode (h1,h2,h3,h4,p1,p2)
+        //其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
+        
+    }
     int len;
     std::string str = ev->buf;
     int ret = sendMsg(str, fd);
@@ -213,7 +219,7 @@ void readctor::recvdata(int fd, int events, void*arg){
     int ret = recvMsg(str, fd);
 
     pthread_mutex_lock(&event_mutex); // 加锁
-    if(ret == -1){
+    if(ret == -1){//失败处理
         close(ev->fd);
         printf("recv[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
         return;
