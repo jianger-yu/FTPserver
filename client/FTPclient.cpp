@@ -46,7 +46,7 @@ int main(){
   std::string str;
 
   pthread_t tid = 0;
-  //pthread_create(&tid, NULL, read_clit,(void *)client.getSocket());
+  pthread_create(&tid, NULL, read_clit,(void *)client.getSocket());
 
   while(1){
     memset(buf, 0, sizeof buf);
