@@ -21,7 +21,11 @@ bool Socket::recv_all(int sockfd,void * buf,size_t len){
   char* p = static_cast<char*>(buf);
   while(len > 0){
     int n = recv(sockfd,p,len,0);
-    if(n <= 0) return false;
+    if(n < 0) return false;
+    if(n == 0){
+      printf("对端已断开连接\n");
+      exit(1);
+    }
     p += n;
     len -= n;
   }
