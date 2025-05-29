@@ -2,6 +2,8 @@
 #include "../socket/socket.h"
 #include "../EpollReactor.hpp"
 
+//定义数据通信伪客户端
+FTPClient dataclient;
 
 FTPClient::FTPClient()
     : fd_(socket(AF_INET, SOCK_STREAM, 0)),
@@ -104,25 +106,23 @@ bool FTPClient::PASV(){
 
   //读取ip及端口号,形如：227 entering passive mode (h1,h2,h3,h4,p1,p2)，其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
   ret = sock->recvMsg(str);
+  printf("recv string :%s\n",str.c_str());
   short newport = 0;
   std::string newip;
 
   //将数据转化为可用的变量
   trans(str, newip, newport);
-  printf("ip:%s  port:%d\n",newip, newport);
+  printf("ip:%s  port:%d\n",newip.c_str(), newport);
 
-  //初始化数据套接字
-  datafd = socket(AF_INET, SOCK_STREAM, 0);
-  if(datafd < 0){
-    printf("datafd socket error:%s\n",strerror(errno));
-    exit(1);
-  }
-  datasocket = std::make_unique<Socket>(datafd);
   
   //连接主机
-  if(false == this->connectToHost(newip.c_str(), newport)){
+  if(false == dataclient.connectToHost(newip.c_str(), newport)){
     printf("连接至主机失败！！ error:%s\n", strerror(errno));
     exit(1);
+  }
+  else{
+    printf("连接至主机成功！！\n");
+    sleep(10);
   }
 
   pasv = true;
@@ -130,7 +130,7 @@ bool FTPClient::PASV(){
 }
 
 bool FTPClient::EXIT(){
-  
+  return true;
 }
 
 void FTPClient::ctlthread(void){

@@ -16,10 +16,13 @@
 #include <time.h>
 #include <queue>
 #include "ThreadPool.hpp"
+#include "server/server.h"
 
 #define MAX_EVENTS 1024     //监听上限数
 #define BUFLEN 4096
 #define SERV_PORT 1145
+#define MAX_PORT 65535      //端口上限
+#define DATASENDIP "192.168.110.4"
 
 
 
@@ -32,8 +35,22 @@ typedef struct event{
     void*arg;       //泛型参数
     void (readctor::*call_back)(int fd, int events, void * arg); //回调函数
     int status;     //是否在红黑树上，1->在，0->不在
+    //读入的信息及长度
     char buf[BUFLEN];
     int len;
+    //用于监听的文件描述符
+    int lisfd;
+    //用于给客户端传输数据的文件描述符
+    int datafd;
+    //用于通信的地址结构
+    struct sockaddr_in skaddr;
+    socklen_t skaddr_len;
+    //用于控制顺序的锁和条件变量及控制原子
+    pthread_mutex_t pthlock;
+    pthread_cond_t pthcond;
+    //true--线程已准备好， false--线程未准备好
+    bool pthready;
+
     long last_active;   //记录最后加入红黑树的时间值
 }event;
 
@@ -54,7 +71,14 @@ typedef struct event{
     //监听回调
     void acceptconn(int lfd,int tmp, void * arg);
 
-    //写回调
+    //获取一个端口与数据传输线程
+    unsigned short getport(event * ev);
+    static void data_pth(event* ev, unsigned short port);
+    
+    //获取需发送的字符串
+    void getsendstr(event* ev,unsigned short dataport, std::string &str);
+
+    //处理回调
     void senddata(int fd,int tmp, void * arg);
     
     //读回调
@@ -181,28 +205,110 @@ int recvMsg(std::string& msg,int sockfd_) {
   return 0;
 }
 
+unsigned short readctor::getport(event* ev){
+    ev -> lisfd = socket(AF_INET, SOCK_STREAM, 0);
+    unsigned short i;
+    for(i = 1025; i <= 65535; i++){
+        if(i <= 10) i = 1025;
+        ev->skaddr.sin_family = AF_INET;
+        ev->skaddr.sin_port = htons(i);
+        ev->skaddr.sin_addr.s_addr = inet_addr(DATASENDIP);
+        ev->skaddr_len = sizeof ev->skaddr;
+
+        int ret = bind(ev->lisfd,(struct sockaddr*)&ev->skaddr, sizeof ev->skaddr);
+        if(ret == -1) {
+            printf("bind: port:%hu  ip:%s  error:%s\n",i,DATASENDIP,strerror(errno));
+            sleep(3);
+            continue;
+        }
+        ret = listen(ev->lisfd, 128);
+        if(ret == -1) {
+            printf("listen error: %s\n",strerror(errno));
+            continue;
+        }
+        else break;
+    }
+  return i;
+}
+
+
+void readctor::getsendstr(event* ev,unsigned short dataport, std::string &str){
+    str.clear();
+    str = "227 entering passive mode (";
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(ev->skaddr.sin_addr), ip_str, INET_ADDRSTRLEN);
+    std::string ipstr = ip_str;
+    for(int i = 0; i < ipstr.size(); i++){
+        if(ipstr[i] == '.') str.push_back(',');
+        else str.push_back(ipstr[i]);
+    }
+    int p1 = dataport/256, p2 = dataport%256;
+    char portstr[30];
+    sprintf(portstr,",%d,%d)",p1,p2);
+    ipstr.clear();
+    ipstr = portstr;
+    str += ipstr;
+}
+
+void readctor::data_pth(event * ev,unsigned short port){
+    printf("datapth run start\n");
+    pthread_mutex_lock(&ev->pthlock);
+    ev->pthready = true;
+    pthread_cond_signal(&ev->pthcond);
+    pthread_mutex_unlock(&ev->pthlock); // 解锁
+    printf("datafd[%d]: 阻塞等待客户端连接\n",ev->lisfd);
+    ev->datafd = accept(ev->lisfd,NULL, NULL);
+    if(ev->datafd == -1){
+        printf("accept [%d] error:%s\n",ev->lisfd, strerror(errno));
+        return;
+    }
+    else printf("已成功连接!\n");
+}
+
+
 //处理回调
 void readctor::senddata(int fd,int tmp, void * arg){
     event * ev = (event*)arg;
     if(strcmp(ev->buf,"PASV") == 0){
-        //用户请求被动模式，应开一个数据传输线程
-        //并将生成的端口号告知客户端控制线程，返回 227 entering passive mode (h1,h2,h3,h4,p1,p2)
-        //其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
+        printf("new PASV command\n");
+        //①用户请求被动模式，应开一个数据传输线程
+        //②将生成的端口号告知客户端控制线程，返回 227 entering passive mode (h1,h2,h3,h4,p1,p2)
+        //  其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
         
+        //获取端口号
+        unsigned short dataport = getport(ev);
+        printf("getport return port is : %d\n",dataport);
+        pthread_mutex_lock(&ev->pthlock);
+        ev->pthready = false;
+        //开数据传输线程，监听该端口
+        pthpool.PushTask(readctor::data_pth, ev, dataport);
+        //阻塞等待数据传输线程开始监听
+        while(!ev->pthready){
+            pthread_cond_wait(&ev->pthcond, &ev->pthlock);
+        }
+        pthread_mutex_unlock(&ev->pthlock);
+
+        //获取需发送的字符串
+        std::string str;
+        getsendstr(ev, dataport, str);
+        printf("getsendstr return string is :%s\n",str.c_str());
+        //对客户端发送字符串
+        sendMsg(str, ev->fd);
     }
+    /*
     int len;
     std::string str = ev->buf;
     int ret = sendMsg(str, fd);
-
+    */
     pthread_mutex_lock(&event_mutex); // 加锁
-    if(ret == -1){
+    /*if(ret == -1){
         close(ev->fd);
         printf("send[fd = %d] , len = %ld, error %s\n",fd,str.size(),strerror(errno));
-    }
+    }*/
     eventdel(ev);
     
-    printf("send[fd = %d],[%ld]%s\n",fd,str.size(),ev->buf);
-
+    //printf("send[fd = %d],[%ld]%s\n",fd,str.size(),ev->buf);
+    memset(ev->buf, 0, sizeof ev->buf);
     eventset(ev,fd,&readctor::recvdata,ev);
     eventadd(EPOLLIN, ev);   
 
@@ -256,6 +362,10 @@ void readctor::eventset(event * ev, int fd, void (readctor::* call_back)(int ,in
 
     ev -> events = 0;
     ev -> status = 0; 
+
+    ev->pthlock = PTHREAD_MUTEX_INITIALIZER;
+    ev->pthcond = PTHREAD_COND_INITIALIZER;
+    
     ev -> last_active = time(NULL);     //调用eventset函数的时间
     return;
 }

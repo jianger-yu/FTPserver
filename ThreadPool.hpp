@@ -90,7 +90,10 @@ void *pthread_pool::consumer(pthread_pool* pool){
         // 拿取任务
         task *mytask;
         mytask = pool->task_queue;
-        if(mytask == NULL) continue;
+        if(mytask == NULL) {
+            pthread_mutex_unlock(&pool->lock);
+            continue;
+        }
         pool->task_queue = pool->task_queue->next;
         // 拿完任务直接解锁
         pthread_mutex_unlock(&pool->lock);

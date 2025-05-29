@@ -72,4 +72,6 @@ class FTPClient {
   std::unique_ptr<Socket> datasocket;
   //是否进入被动模式-----------true进入，false未进入
   bool pasv;
+
+
 };
