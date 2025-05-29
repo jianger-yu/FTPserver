@@ -75,11 +75,14 @@ public:
 // 消费者
 void *pthread_pool::consumer(pthread_pool* pool){
     while (1){
+        int key = 0;
         pthread_mutex_lock(&pool->lock); // 上锁
 
-        while (pool->task_queue == NULL && pool->stop == false){
+        while (key == 0 ||( pool->task_queue == NULL && pool->stop == false )){
+            key = 1;
             pthread_cond_wait(&pool->cond, &pool->lock);
         }
+        printf("消费者被唤醒，走出循环\n");
         // 出循环，表示已经拿到了锁且有任务
         // 检查是否需要终止线程
         if (pool->stop){
@@ -98,6 +101,7 @@ void *pthread_pool::consumer(pthread_pool* pool){
         // 拿完任务直接解锁
         pthread_mutex_unlock(&pool->lock);
 
+        printf("消费者成功拿到任务\n");
         // 执行任务
         mytask->function();
         delete mytask;
@@ -145,7 +149,7 @@ void pthread_pool::PushTask(Func&& func, Args&&... args) {
             p = p->next;
         p->next = NewTask;        // 转移所有权到队列
     }
-
+    printf("已成功将一个任务push到任务队列\n");
     pthread_cond_signal(&this->cond);  // 唤醒工作线程
     pthread_mutex_unlock(&this->lock); // 解锁
 }

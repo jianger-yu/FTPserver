@@ -73,7 +73,7 @@ typedef struct event{
 
     //获取一个端口与数据传输线程
     unsigned short getport(event * ev);
-    static void data_pth(event* ev, unsigned short port);
+    static void data_pth(readctor::event* ev, unsigned short port);
     
     //获取需发送的字符串
     void getsendstr(event* ev,unsigned short dataport, std::string &str);
@@ -206,10 +206,11 @@ int recvMsg(std::string& msg,int sockfd_) {
 }
 
 unsigned short readctor::getport(event* ev){
-    ev -> lisfd = socket(AF_INET, SOCK_STREAM, 0);
     unsigned short i;
     for(i = 1025; i <= 65535; i++){
         if(i <= 10) i = 1025;
+        ev -> lisfd = socket(AF_INET, SOCK_STREAM, 0);
+
         ev->skaddr.sin_family = AF_INET;
         ev->skaddr.sin_port = htons(i);
         ev->skaddr.sin_addr.s_addr = inet_addr(DATASENDIP);
@@ -218,12 +219,13 @@ unsigned short readctor::getport(event* ev){
         int ret = bind(ev->lisfd,(struct sockaddr*)&ev->skaddr, sizeof ev->skaddr);
         if(ret == -1) {
             printf("bind: port:%hu  ip:%s  error:%s\n",i,DATASENDIP,strerror(errno));
-            sleep(3);
+            //sleep(3);
             continue;
         }
         ret = listen(ev->lisfd, 128);
         if(ret == -1) {
             printf("listen error: %s\n",strerror(errno));
+            close(ev->lisfd);
             continue;
         }
         else break;
@@ -250,7 +252,7 @@ void readctor::getsendstr(event* ev,unsigned short dataport, std::string &str){
     str += ipstr;
 }
 
-void readctor::data_pth(event * ev,unsigned short port){
+void readctor::data_pth(readctor::event * ev,unsigned short port){
     printf("datapth run start\n");
     pthread_mutex_lock(&ev->pthlock);
     ev->pthready = true;
@@ -327,7 +329,7 @@ void readctor::recvdata(int fd, int events, void*arg){
     pthread_mutex_lock(&event_mutex); // 加锁
     if(ret == -1){//失败处理
         close(ev->fd);
-        printf("recv[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
+        printf("recvMsg[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
         return;
     }
     strcpy(ev->buf,str.c_str());
@@ -348,7 +350,7 @@ void readctor::recvdata(int fd, int events, void*arg){
         printf("[fd = %d] pos[%ld], closed\n", fd, ev-r_events);
     }else{
         close(ev->fd);
-        printf("recv[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
+        printf("recv[fd = %d] str.size() == [%d] error[%d]:%s\n",fd,len,errno,strerror(errno));
     }
 
     pthread_mutex_unlock(&event_mutex); // 解锁
