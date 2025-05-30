@@ -22,7 +22,7 @@
 #define BUFLEN 4096
 #define SERV_PORT 1145
 #define MAX_PORT 65535      //端口上限
-#define DATASENDIP "192.168.110.4"
+#define DATASENDIP "192.168.43.108"
 
 
 
@@ -180,7 +180,7 @@ bool recv_all(int sockfd,void * buf,size_t len){
         n = recv(sockfd,p,len,0);
         if (n > 0) { p += n; len -= n; }
         else if (n == 0) break; // 对端关闭
-        else if (errno != EAGAIN && errno != EWOULDBLOCK) return false; 
+        else if (errno != EAGAIN && errno != EWOULDBLOCK) return false;
     }
     while(n > 0);
     //if(!(errno == EAGAIN || errno == EWOULDBLOCK)) return false; 

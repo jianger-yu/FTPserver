@@ -100,7 +100,7 @@ void *pthread_pool::consumer(pthread_pool* pool){
         pool->task_queue = pool->task_queue->next;
         // 拿完任务直接解锁
         pthread_mutex_unlock(&pool->lock);
-
+        printf("任务函数地址：%p\n", reinterpret_cast<void*>(mytask->function.target_type().hash_code()));
         printf("消费者成功拿到任务\n");
         // 执行任务
         mytask->function();
