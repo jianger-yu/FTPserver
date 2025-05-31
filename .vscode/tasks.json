@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "cppbuild",
+            "label": "Build FTPserver",
+            "command": "g++",
+            "args": [
+                "-g",
+                "${workspaceFolder}/server/FTPserver.cpp",
+                "${workspaceFolder}/socket/socket.cpp",  // 添加Socket类的实现文件
+                "-o",
+                "${workspaceFolder}/server/FTPserver",
+                "-I${workspaceFolder}"
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "编译FTP服务器"
+        }
+    ]
+}

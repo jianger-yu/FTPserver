@@ -22,7 +22,7 @@
 #define BUFLEN 4096
 #define SERV_PORT 1145
 #define MAX_PORT 65535      //端口上限
-#define DATASENDIP "192.168.43.108"
+#define DATASENDIP "10.30.0.148"
 
 
 
@@ -330,6 +330,7 @@ void readctor::recvdata(int fd, int events, void*arg){
     if(ret == -1){//失败处理
         close(ev->fd);
         printf("recvMsg[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
+        pthread_mutex_unlock(&event_mutex); // 解锁
         return;
     }
     strcpy(ev->buf,str.c_str());
@@ -402,6 +403,12 @@ void readctor::eventadd(int events, event * ev){
 void readctor::InitListenSocket(unsigned short port){
     struct sockaddr_in addr;
     int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+    if (setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {//端口复用
+        perror("setsockopt failed");
+        close(lfd);
+        return ;
+    }
     fcntl(lfd, F_SETFL, O_NONBLOCK);
 
     memset(&addr, 0, sizeof addr);
