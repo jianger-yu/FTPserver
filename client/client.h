@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+
 #include "../socket/socket.h"
 
 class FTPClient {
@@ -28,6 +29,7 @@ class FTPClient {
   void ctlthread(void);
 
   void trans(std::string &, std::string &, short&);
+  
 
   /**
    * @brief 利用通信套接字发送PASV命令给服务器，服务器回复一个端口地址，利用端口地址定义数据传输套接字

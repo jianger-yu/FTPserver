@@ -13,6 +13,7 @@ FTPClient::~FTPClient() {
   close(fd_);
 }
 
+FTPClient client;
 
 bool FTPClient::connectToHost(const char* ip, unsigned short port) {
   struct sockaddr_in addr;
@@ -55,6 +56,8 @@ void FTPClient::menu(){
     printf("                                          已进入被动模式\n");
   }
   printf("==========================================================\n");
+  if(this->pasv == true)
+    printf("tip:成功进入被动模式，可以进行文件传输\n");
   printf("请输入命令:>");
   fflush(stdout); // 手动刷新标准输出缓冲区
 }
@@ -89,6 +92,18 @@ void FTPClient::trans(std::string &str, std::string &newip, short &newport){
   newport = p1*256 + p2;
 }
 
+void sig_catch(int sig){
+  if(sig == SIGALRM){
+    client.~FTPClient();
+    FTPClient newcli;
+    if(newcli.connectToHost("127.0.0.1", 2100)==false){
+      printf("连接FTP服务器2100端口失败,error:%s\n",strerror(errno));
+      exit(1);
+    }
+    newcli.PASV();
+    newcli.ctlthread();
+  }
+}
 
 bool FTPClient::PASV(){
   if(pasv == true) return true;
@@ -103,26 +118,34 @@ bool FTPClient::PASV(){
     exit(1);
   }
   str.clear();
+  alarm(2);
+  struct sigaction act;
+  act.sa_flags = 0;
+  act.sa_handler = sig_catch;
+  sigemptyset(&(act.sa_mask));
+  sigaction(SIGALRM,&act,NULL);
 
   //读取ip及端口号,形如：227 entering passive mode (h1,h2,h3,h4,p1,p2)，其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
   ret = sock->recvMsg(str);
-  printf("recv string :%s\n",str.c_str());
+  alarm(0);
+  //printf("recv string :%s\n",str.c_str());
   short newport = 0;
   std::string newip;
 
   //将数据转化为可用的变量
   trans(str, newip, newport);
-  printf("ip:%s  port:%d\n",newip.c_str(), newport);
+  //printf("ip:%s  port:%d\n",newip.c_str(), newport);
 
   
   //连接主机
   if(false == dataclient.connectToHost(newip.c_str(), newport)){
     printf("连接至主机失败！！ error:%s\n", strerror(errno));
+    sleep(5);
     exit(1);
   }
   else{
-    printf("连接至主机成功！！\n");
-    sleep(10);
+    //printf("连接至主机成功！！\n");
+    //sleep(10);
   }
 
   pasv = true;
@@ -148,7 +171,8 @@ void FTPClient::ctlthread(void){
     buf[ret - 1] = '\0';
     str = buf;
     if(strcmp(buf,"PASV") == 0){
-      this->PASV();
+      if(this->pasv == false)
+        this->PASV();
       continue;
     }
     else if(strcmp(buf,"EXIT") == 0){
@@ -159,7 +183,6 @@ void FTPClient::ctlthread(void){
 }
 
 int main(){
-  FTPClient client;
   if(client.connectToHost("127.0.0.1", 2100)==false){
     printf("连接FTP服务器2100端口失败,error:%s\n",strerror(errno));
     exit(1);
