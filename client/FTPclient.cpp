@@ -159,11 +159,11 @@ bool FTPClient::EXIT(){
   std::string str = "EXIT";
   int ret = sock->sendMsg(str);
   if(ret == -1){
-    printf("send 'PASV' command error:%s\n",strerror(errno));
+    printf("send 'EXIT' command error:%s\n",strerror(errno));
     exit(1);
   }
-
   str.clear();
+  
   dataclient.~FTPClient();
   dataclient.reinitialize();
   this->pasv = false;
@@ -171,6 +171,29 @@ bool FTPClient::EXIT(){
 }
 
 bool FTPClient::LIST(){
+  Socket* sock = this->getSocket();
+  std::string str = "LIST";
+  int ret = sock->sendMsg(str);
+  if(ret == -1){
+    printf("send 'LIST' command error:%s\n",strerror(errno));
+    exit(1);
+  }
+  str.clear();
+
+  //读取文件数
+  ret = sock->recvMsg(str);
+  if(ret == -1) printf("recv file count error:%s\n",strerror(errno));
+  int cnt;
+  sscanf(str.c_str(),"%d",&cnt);
+  str.clear();
+
+  //依次读取固定量个文件
+  for(int i = 0; i < cnt; i++){
+    ret = sock->recvMsg(str);
+    if(ret == -1) printf("recv file information error:%s\n",strerror(errno));
+    printf("%s\n",str.c_str());
+    str.clear();
+  }
 
   return true;
 }

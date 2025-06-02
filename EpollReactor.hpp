@@ -15,6 +15,10 @@
 #include <ctype.h>
 #include <time.h>
 #include <queue>
+#include <pwd.h>
+#include <dirent.h>
+#include <sys/stat.h>
+
 #include "ThreadPool.hpp"
 #include "server/server.h"
 
@@ -23,8 +27,13 @@
 #define SERV_PORT 1145
 #define MAX_PORT 65535      //端口上限
 #define DATASENDIP "192.168.110.3"
+#define FTPFILEROAD "/home/jianger/codes/FTPserver/server/FTPfile"
+#define max_road 4096
 
-
+struct my_dr{
+    char name[256];
+    long unsigned int ino;
+};
 
 class readctor{
 private:
@@ -289,8 +298,93 @@ void readctor::PASV(event * ev){
     sendMsg(str, ev->fd);
 }
 
-void readctor::LIST(event * ev){
+bool cmp(char *a,char*b)//返回a时间是否新于b时间
+{
+    struct stat sta,stb;
+    if(lstat(a,&sta)==-1){//判断错误返回值
+        perror("sta");
+        exit(1);
+    }
+    if(lstat(b,&stb)==-1){//判断错误返回值
+        perror("stb");
+        exit(1);
+    }
+    time_t mta = sta.st_mtime;
+    struct tm * ta = localtime(&mta);//得到a的时间信息
+    int yea=ta->tm_year,mo=ta->tm_mon,da=ta->tm_mday,hou=ta->tm_hour,mi=ta->tm_min;//存储a的时间信息
+    time_t mtb = stb.st_mtime;
+    struct tm * tb = localtime(&mtb);//得到b的时间信息
+    //通过a存储的时间信息和b的时间信息比较
+    if(yea!=tb->tm_year) return yea  >  tb->tm_year;
+    if(mo!=tb->tm_mon)   return mo   >  tb->tm_mon;
+    if(da!=tb->tm_mday)  return da   >  tb->tm_mday;
+    if(hou!=tb->tm_hour) return hou  >  tb->tm_hour;
+    if(mi!=tb->tm_min)   return mi   >  tb->tm_min;
+    return false;
+}
+//使用快速排序对其排序
+void msort(struct my_dr *arr,int l,int r,char *s)
+{
+    if(l>=r) return ;
+    int i = l - 1, j = r + 1, x = (l + r) >> 1;
+    char road[max_road],roadx[max_road];
+    sprintf(roadx,"%s/%s",s,arr[x].name);
+    while(i<j)
+    {
+        do {
+            i++;
+            sprintf(road,"%s/%s",s,arr[i].name);//构建绝对路径
+        } 
+        while(cmp(road,roadx));
+        do {
+            j--;
+            sprintf(road,"%s/%s",s,arr[j].name);//构建绝对路径
+        } 
+        while(cmp(roadx,road));
+        if(i<j) //swap(arr[i],arr[j])
+        {
+            struct my_dr tmp= arr[i];
+            arr[i]=arr[j];
+            arr[j]=tmp;
+        }
+    }
+    msort(arr, l, j, s);
+    msort(arr, j + 1, r, s);
+}
 
+void readctor::LIST(event * ev){
+    DIR* dp;
+    struct dirent* di;
+    struct my_dr *arr=(struct my_dr *)malloc(sizeof(struct my_dr )*20);//开辟动态数组
+    if(arr == NULL){//处理错误返回值
+        perror("malloc");
+        exit(1);
+    }
+    int cnt = 0,size = 20;
+    //打开目录
+    dp = opendir(FTPFILEROAD);
+    if(dp == NULL){//处理错误返回值
+        perror("opendir");
+        exit(1);
+    }
+    //读目录
+    while((di = readdir(dp)) != NULL){
+        if(cnt>=size){//扩容
+            size*=2;
+            arr=(struct my_dr *)realloc(arr,sizeof(struct my_dr )*size);
+        }
+        strcpy(arr[cnt].name,di->d_name);//数组存储
+        arr[cnt++].ino=di->d_ino;
+    }
+    //给客户端发文件数量
+    std::string str;
+    char buf[4096];
+    sprintf(buf,"%d",cnt);
+    msort(arr,0,cnt-1,FTPFILEROAD);   //按时间排序
+
+    for(int i = 0; i < cnt; i++){
+        
+    }
 }
 
 void readctor::STOR(event * ev){
@@ -328,11 +422,19 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
             printf("EXIT run\n");
             close(ev->datafd);
             ev->dataready = false;
-            pthread_mutex_unlock(&ev->datalock);
 
+            //解数据锁
+            pthread_mutex_unlock(&ev->datalock);
             //已经运行完，通知处理回调函数
             pthread_mutex_unlock(&ev->pthlock); // 解锁
             return;
+        }
+        else if(strcmp(ev->buf,"LIST")  == 0){
+            th->LIST(ev);
+            //解数据锁
+            pthread_mutex_unlock(&ev->datalock);
+            //已经运行完，通知处理回调函数
+            pthread_mutex_unlock(&ev->pthlock); // 解锁
         }
         ev->dataready = false;
     }
