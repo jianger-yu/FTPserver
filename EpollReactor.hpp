@@ -48,9 +48,15 @@ typedef struct event{
     //用于控制顺序的锁和条件变量及控制原子
     pthread_mutex_t pthlock;
     pthread_cond_t pthcond;
+
+    //用于给数据传输线程通知有新任务的锁
+    pthread_mutex_t datalock;
+    pthread_cond_t datacond;
+
     //true--线程已准备好， false--线程未准备好
     bool pthready;
-
+    bool dataready;
+    bool lockinit;
     long last_active;   //记录最后加入红黑树的时间值
 }event;
 
@@ -73,11 +79,15 @@ typedef struct event{
 
     //获取一个端口与数据传输线程
     unsigned short getport(event * ev);
-    static void data_pth(readctor::event* ev, unsigned short port);
+    static void data_pth(readctor::event* ev, unsigned short port, readctor* th);
     
     //获取需发送的字符串
     void getsendstr(event* ev,unsigned short dataport, std::string &str);
 
+    void PASV(event * ev);
+    void LIST(event * ev);
+    void STOR(event * ev);
+    void RETR(event * ev);
     //处理回调
     void senddata(int fd,int tmp, void * arg);
     
@@ -252,7 +262,46 @@ void readctor::getsendstr(event* ev,unsigned short dataport, std::string &str){
     str += ipstr;
 }
 
-void readctor::data_pth(readctor::event * ev,unsigned short port){
+void readctor::PASV(event * ev){
+    printf("new PASV command\n");
+    //①用户请求被动模式，应开一个数据传输线程
+    //②将生成的端口号告知客户端控制线程，返回 227 entering passive mode (h1,h2,h3,h4,p1,p2)
+    //  其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
+    
+    //获取端口号
+    unsigned short dataport = getport(ev);
+    printf("getport return port is : %d\n",dataport);
+    pthread_mutex_lock(&ev->pthlock);
+    ev->pthready = false;
+    //开数据传输线程，监听该端口
+    pthpool.PushTask(readctor::data_pth, ev, dataport,this);
+    //阻塞等待数据传输线程开始监听
+    while(!ev->pthready){
+        pthread_cond_wait(&ev->pthcond, &ev->pthlock);
+    }
+    pthread_mutex_unlock(&ev->pthlock);
+
+    //获取需发送的字符串
+    std::string str;
+    getsendstr(ev, dataport, str);
+    printf("getsendstr return string is :%s\n",str.c_str());
+    //对客户端发送字符串
+    sendMsg(str, ev->fd);
+}
+
+void readctor::LIST(event * ev){
+
+}
+
+void readctor::STOR(event * ev){
+    
+}
+
+void readctor::RETR(event * ev){
+    
+}
+
+void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
     printf("datapth run start\n");
     pthread_mutex_lock(&ev->pthlock);
     ev->pthready = true;
@@ -265,51 +314,59 @@ void readctor::data_pth(readctor::event * ev,unsigned short port){
         return;
     }
     else printf("已成功连接!\n");
+    ev->dataready = false;
+    while(1){
+        //上两把锁
+        pthread_mutex_lock(&ev->pthlock);
+
+        pthread_mutex_lock(&ev->datalock);
+        while(!ev->dataready){
+            pthread_cond_wait(&ev->datacond, &ev->datalock);
+        }
+        //出循环，说明已经有任务
+        if(strcmp(ev->buf,"EXIT")  == 0){
+            printf("EXIT run\n");
+            close(ev->datafd);
+            ev->dataready = false;
+            pthread_mutex_unlock(&ev->datalock);
+
+            //已经运行完，通知处理回调函数
+            pthread_mutex_unlock(&ev->pthlock); // 解锁
+            return;
+        }
+        ev->dataready = false;
+    }
 }
 
 
 //处理回调
 void readctor::senddata(int fd,int tmp, void * arg){
     event * ev = (event*)arg;
+    printf("处理回调被执行,ev->buf:%s\n",ev->buf);
     if(strcmp(ev->buf,"PASV") == 0){
-        printf("new PASV command\n");
-        //①用户请求被动模式，应开一个数据传输线程
-        //②将生成的端口号告知客户端控制线程，返回 227 entering passive mode (h1,h2,h3,h4,p1,p2)
-        //  其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
-        
-        //获取端口号
-        unsigned short dataport = getport(ev);
-        printf("getport return port is : %d\n",dataport);
-        pthread_mutex_lock(&ev->pthlock);
-        ev->pthready = false;
-        //开数据传输线程，监听该端口
-        pthpool.PushTask(readctor::data_pth, ev, dataport);
-        //阻塞等待数据传输线程开始监听
-        while(!ev->pthready){
-            pthread_cond_wait(&ev->pthcond, &ev->pthlock);
-        }
-        pthread_mutex_unlock(&ev->pthlock);
-
-        //获取需发送的字符串
-        std::string str;
-        getsendstr(ev, dataport, str);
-        printf("getsendstr return string is :%s\n",str.c_str());
-        //对客户端发送字符串
-        sendMsg(str, ev->fd);
+        PASV(ev);
     }
-    /*
-    int len;
-    std::string str = ev->buf;
-    int ret = sendMsg(str, fd);
-    */
-    pthread_mutex_lock(&event_mutex); // 加锁
-    /*if(ret == -1){
-        close(ev->fd);
-        printf("send[fd = %d] , len = %ld, error %s\n",fd,str.size(),strerror(errno));
-    }*/
+    else{
+        //给数据传输线程发信号，有新事件需要处理
+        pthread_mutex_lock(&ev->datalock);
+        ev->dataready = true;
+        pthread_cond_signal(&ev->datacond);
+        pthread_mutex_unlock(&ev->datalock); // 解锁
+
+    }
+    
+    pthread_mutex_lock(&ev->pthlock);//抢线程预备锁，确保数据传输线程运行完
+    //while(!ev->pthready){
+    //    pthread_cond_wait(&ev->pthcond, &ev->pthlock);
+    //}//出循环，即数据线程已处理完
+    ev->pthready = false;
+    pthread_mutex_unlock(&ev->pthlock);//解锁
+
+
+    pthread_mutex_lock(&event_mutex); // 修改红黑树公共区域，加事件锁
+   
     eventdel(ev);
     
-    //printf("send[fd = %d],[%ld]%s\n",fd,str.size(),ev->buf);
     memset(ev->buf, 0, sizeof ev->buf);
     eventset(ev,fd,&readctor::recvdata,ev);
     eventadd(EPOLLIN, ev);   
@@ -333,6 +390,7 @@ void readctor::recvdata(int fd, int events, void*arg){
         pthread_mutex_unlock(&event_mutex); // 解锁
         return;
     }
+    memset(ev->buf, 0, sizeof ev->buf);
     strcpy(ev->buf,str.c_str());
     len = str.size();
 
@@ -366,9 +424,23 @@ void readctor::eventset(event * ev, int fd, void (readctor::* call_back)(int ,in
     ev -> events = 0;
     ev -> status = 0; 
 
+    if(ev->lockinit == false){
+        pthread_mutex_init(&ev->pthlock, NULL);
+        pthread_cond_init(&ev->pthcond, NULL);
+
+        pthread_mutex_init(&ev->datalock, NULL);
+        pthread_cond_init(&ev->datacond, NULL);
+        ev->lockinit = true;
+    }
+
+    /*
     ev->pthlock = PTHREAD_MUTEX_INITIALIZER;
     ev->pthcond = PTHREAD_COND_INITIALIZER;
     
+    ev->datalock = PTHREAD_MUTEX_INITIALIZER;
+    ev->datacond = PTHREAD_COND_INITIALIZER;
+    */
+   
     ev -> last_active = time(NULL);     //调用eventset函数的时间
     return;
 }
@@ -392,6 +464,7 @@ void readctor::eventadd(int events, event * ev){
             printf("epoll_ctl  mod is error :[fd = %d], events[%d]\n", ev->fd, combined_events);
         else
             printf("epoll_ctl mod sccess on [fd = %d], [op = %d] events[%0X]\n",ev->fd, op, combined_events);
+        return;
     }
     if(epoll_ctl(epfd, op, ev -> fd, &epv) < 0)
         printf("epoll_ctl is error :[fd = %d], events[%d]\n", ev->fd, combined_events);
@@ -467,6 +540,7 @@ void readctor::readctorinit(unsigned short port){
             event *ev = (event *) events[i].data.ptr;
             //读事件，调用读回调
             if((events[i].events & EPOLLIN) && (ev -> events & EPOLLIN)){
+                //printf("触发读回调监听:i(%d)\n",i);
                 //struct EventContext ctx = {ev,this};
                 struct EventContext* ctx = (struct EventContext*)malloc(sizeof (struct EventContext));
                 ctx->ev = ev;
@@ -476,6 +550,7 @@ void readctor::readctorinit(unsigned short port){
             }
             //写事件，调用写回调
             if((events[i].events & EPOLLOUT) && (ev -> events & EPOLLOUT)){
+                //printf("触发写回调监听:i(%d)\n",i);
                 /*auto ctx = new EventContext{ev, this};
                 pthpool.PushTask(event_callback_wrapper, ctx);*/
                 struct EventContext* ctx = (struct EventContext*)malloc(sizeof (struct EventContext));

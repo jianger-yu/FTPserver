@@ -59,7 +59,7 @@ public:
     void *consumer(pthread_pool* pool);
 
     //构造函数，初始化线程池
-    pthread_pool(int ThreadCount = 100);
+    pthread_pool(int ThreadCount = 500);
 
     // 添加任务到线程池
     template<typename Func, typename... Args>

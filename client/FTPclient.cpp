@@ -14,6 +14,7 @@ FTPClient::~FTPClient() {
 }
 
 FTPClient client;
+FTPClient * clip = NULL;
 
 bool FTPClient::connectToHost(const char* ip, unsigned short port) {
   struct sockaddr_in addr;
@@ -54,10 +55,9 @@ void FTPClient::menu(){
   }
   else{
     printf("                                          已进入被动模式\n");
+    printf("   tip:成功进入被动模式，可以进行文件传输\n");
   }
   printf("==========================================================\n");
-  if(this->pasv == true)
-    printf("tip:成功进入被动模式，可以进行文件传输\n");
   printf("请输入命令:>");
   fflush(stdout); // 手动刷新标准输出缓冲区
 }
@@ -94,8 +94,9 @@ void FTPClient::trans(std::string &str, std::string &newip, short &newport){
 
 void sig_catch(int sig){
   if(sig == SIGALRM){
-    client.~FTPClient();
+    clip->~FTPClient();
     FTPClient newcli;
+    clip = &newcli;
     if(newcli.connectToHost("127.0.0.1", 2100)==false){
       printf("连接FTP服务器2100端口失败,error:%s\n",strerror(errno));
       exit(1);
@@ -106,6 +107,7 @@ void sig_catch(int sig){
 }
 
 bool FTPClient::PASV(){
+  printf("连接中 ...\n");
   if(pasv == true) return true;
   Socket* sock = this->getSocket();
   std::string str;
@@ -153,6 +155,18 @@ bool FTPClient::PASV(){
 }
 
 bool FTPClient::EXIT(){
+  Socket* sock = this->getSocket();
+  std::string str = "EXIT";
+  int ret = sock->sendMsg(str);
+  if(ret == -1){
+    printf("send 'PASV' command error:%s\n",strerror(errno));
+    exit(1);
+  }
+
+  str.clear();
+  dataclient.~FTPClient();
+  dataclient.reinitialize();
+  this->pasv = false;
   return true;
 }
 
@@ -176,19 +190,21 @@ void FTPClient::ctlthread(void){
       continue;
     }
     else if(strcmp(buf,"EXIT") == 0){
-      this->EXIT();
+      if(this->pasv == true)
+        this->EXIT();
       continue;
     }
   } 
 }
 
 int main(){
-  if(client.connectToHost("127.0.0.1", 2100)==false){
+  while(client.connectToHost("127.0.0.1", 2100)==false){
     printf("连接FTP服务器2100端口失败,error:%s\n",strerror(errno));
-    exit(1);
+    printf("正在重新连接...\n");
+    sleep(1);
   }
+  clip = &client;
   client.ctlthread();
-  
 
 
   return 0;

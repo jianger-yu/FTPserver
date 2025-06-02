@@ -61,7 +61,10 @@ class FTPClient {
    */
   bool EXIT(void);
 
-
+  //在当前内存位置重新构造对象
+  void reinitialize() {
+        new (this) FTPClient();
+  }
   private:
   // 通信套接字
   int fd_;
@@ -69,9 +72,9 @@ class FTPClient {
   std::unique_ptr<Socket> socket_;
 
   //数据传输套接字
-  int datafd;
+  //int datafd;
   //数据传输类对象
-  std::unique_ptr<Socket> datasocket;
+  //std::unique_ptr<Socket> datasocket;
   //是否进入被动模式-----------true进入，false未进入
   bool pasv;
 
