@@ -170,6 +170,11 @@ bool FTPClient::EXIT(){
   return true;
 }
 
+bool FTPClient::LIST(){
+
+  return true;
+}
+
 void FTPClient::ctlthread(void){
   Socket sk(*getSocket());
   char buf[1024];
@@ -192,6 +197,11 @@ void FTPClient::ctlthread(void){
     else if(strcmp(buf,"EXIT") == 0){
       if(this->pasv == true)
         this->EXIT();
+      continue;
+    }
+    else if(strcmp(buf,"LIST") == 0){
+      if(this->pasv == true)
+        this->LIST();
       continue;
     }
   } 

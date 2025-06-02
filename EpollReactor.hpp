@@ -68,7 +68,7 @@ typedef struct event{
     int epfd;   //红黑树的句柄
     event r_events[MAX_EVENTS + 1];
     pthread_pool pthpool;
-    pthread_mutex_t event_mutex; // ac锁
+    pthread_mutex_t event_mutex; // 事件锁，用于修改红黑树的公共区域
     std::queue<EventContext*> evq;
 
     //删除树上节点
@@ -430,6 +430,7 @@ void readctor::eventset(event * ev, int fd, void (readctor::* call_back)(int ,in
 
         pthread_mutex_init(&ev->datalock, NULL);
         pthread_cond_init(&ev->datacond, NULL);
+        
         ev->lockinit = true;
     }
 
