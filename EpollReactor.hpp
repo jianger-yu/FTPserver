@@ -436,6 +436,7 @@ void readctor::RETR(event * ev){
 }
 
 void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
+    int tmp = 1;
     printf("datapth run start\n");
 
     printf("data_pth 准备抢 pthlock\n");
@@ -457,9 +458,11 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
     ev->dataready = false;
     while(1){
 
-        //上两把锁
+        //上三把锁
         printf("data_pth 准备抢 pthlock\n");
         pthread_mutex_lock(&ev->pthlock);
+
+        pthread_mutex_lock(&ev->splock);
 
         printf("data_pth 准备抢 datalock\n");
         pthread_mutex_lock(&ev->datalock);
@@ -470,6 +473,7 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
         }
         //出循环，说明已经有任务
         if(strcmp(ev->buf,"EXIT")  == 0){
+            tmp = 1;
             printf("EXIT run\n");
             close(ev->datafd);
             ev->dataready = false;
@@ -479,23 +483,23 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
             //已经运行完，通知处理回调函数
             pthread_mutex_unlock(&ev->pthlock); // 解锁
             printf("data_pth EXIT 解开所有锁\n");
-            return;
         }
         else if(strcmp(ev->buf,"LIST")  == 0){
+            tmp = 0;
             th->LIST(ev);
             //已经运行完，通知处理回调函数
             pthread_mutex_unlock(&ev->pthlock); // 解锁
             //解数据锁
             pthread_mutex_unlock(&ev->datalock);
             printf("data_pth LIST 解开所有锁\n");
-
-            pthread_mutex_lock(&ev->splock);
-            while(!ev->spready){
-                pthread_cond_wait(&ev->spcond, &ev->splock);
-            }
-            ev->spready = false;
-            pthread_mutex_unlock(&ev->splock);
         }
+        while(!ev->spready){
+            pthread_cond_wait(&ev->spcond, &ev->splock);
+        }
+        ev->spready = false;
+        pthread_mutex_unlock(&ev->splock);
+        printf("data_pth LIST 解开splock\n");
+        if(tmp) return;
         ev->dataready = false;
     }
 }
@@ -512,7 +516,6 @@ void readctor::senddata(int fd,int tmp, void * arg){
         //给数据传输线程发信号，有新事件需要处理
         printf("senddata 准备抢 datalock\n");
         pthread_mutex_lock(&ev->datalock);
-        pthread_mutex_lock(&ev->splock);
         printf("senddata 抢到 datalock\n");
 
         ev->dataready = true;
@@ -523,6 +526,8 @@ void readctor::senddata(int fd,int tmp, void * arg){
         printf("senddata 准备抢 pthlock\n");
         pthread_mutex_lock(&ev->pthlock);//抢线程预备锁，确保数据传输线程运行完
         printf("senddata 抢到 pthlock\n");//发信号通知抢到了
+        pthread_mutex_lock(&ev->splock);
+        ev->spready = true;
         pthread_cond_signal(&ev->spcond);
         pthread_mutex_unlock(&ev->splock);
 
