@@ -82,7 +82,7 @@ void *pthread_pool::consumer(pthread_pool* pool){
             key = 1;
             pthread_cond_wait(&pool->cond, &pool->lock);
         }
-        printf("消费者被唤醒，走出循环\n");
+        //printf("消费者被唤醒，走出循环\n");
         // 出循环，表示已经拿到了锁且有任务
         // 检查是否需要终止线程
         if (pool->stop){

@@ -26,7 +26,7 @@
 #define BUFLEN 4096
 #define SERV_PORT 1145
 #define MAX_PORT 65535      //端口上限
-#define DATASENDIP "192.168.110.3"
+#define DATASENDIP "10.30.0.149"
 #define FTPFILEROAD "/home/jianger/codes/FTPserver/server/FTPfile"
 #define max_road 4096
 
@@ -62,11 +62,19 @@ typedef struct event{
     pthread_mutex_t datalock;
     pthread_cond_t datacond;
 
+    pthread_mutex_t splock;
+    pthread_cond_t spcond;
+
+
     //true--线程已准备好， false--线程未准备好
     bool pthready;
     bool dataready;
+    bool spready;
     bool lockinit;
     long last_active;   //记录最后加入红黑树的时间值
+
+    bool poolrs;//true---已经加入线程池
+    bool poolda;//true---已经开启数据传输线程
 }event;
 
     struct EventContext {
@@ -142,10 +150,17 @@ void readctor::eventdel(event * ev){
 
 //监听回调
 void readctor::acceptconn(int lfd,int tmp, void * arg){
+    event* ev = (event*) arg;
     struct sockaddr_in caddr;
     socklen_t len = sizeof caddr;
     int cfd, i;
+    
+    ev->poolrs = false;
+
+    printf("监听回调 准备抢 event_mutex\n");
     pthread_mutex_lock(&event_mutex); // 加锁
+    printf("监听回调 抢到 event_mutex\n");
+
     if((cfd = accept(lfd, (struct sockaddr *)&caddr,&len)) == -1){
         if(errno != EAGAIN && errno != EINTR){
             //暂时不做出错处理
@@ -174,6 +189,8 @@ void readctor::acceptconn(int lfd,int tmp, void * arg){
     }while(0);
 
     pthread_mutex_unlock(&event_mutex); // 解锁
+    printf("监听回调 解开 event_mutex\n");
+
 
     printf("new connect [%s:%d][time:%ld], pos[%d]\n",
     inet_ntoa(caddr.sin_addr),ntohs(caddr.sin_port), r_events[i].last_active, i);
@@ -280,7 +297,10 @@ void readctor::PASV(event * ev){
     //获取端口号
     unsigned short dataport = getport(ev);
     printf("getport return port is : %d\n",dataport);
+    printf("senddata  PASV 准备抢 pthlock\n");
     pthread_mutex_lock(&ev->pthlock);
+    printf("senddata  PASV 抢到 pthlock\n");
+
     ev->pthready = false;
     //开数据传输线程，监听该端口
     pthpool.PushTask(readctor::data_pth, ev, dataport,this);
@@ -289,7 +309,7 @@ void readctor::PASV(event * ev){
         pthread_cond_wait(&ev->pthcond, &ev->pthlock);
     }
     pthread_mutex_unlock(&ev->pthlock);
-
+    printf("senddata  PASV 解开 pthlock\n");
     //获取需发送的字符串
     std::string str;
     getsendstr(ev, dataport, str);
@@ -323,22 +343,22 @@ bool cmp(char *a,char*b)//返回a时间是否新于b时间
     return false;
 }
 //使用快速排序对其排序
-void msort(struct my_dr *arr,int l,int r,char *s)
+void msort(struct my_dr *arr,int l,int r)
 {
     if(l>=r) return ;
     int i = l - 1, j = r + 1, x = (l + r) >> 1;
     char road[max_road],roadx[max_road];
-    sprintf(roadx,"%s/%s",s,arr[x].name);
+    sprintf(roadx,"%s/%s",FTPFILEROAD,arr[x].name);
     while(i<j)
     {
         do {
             i++;
-            sprintf(road,"%s/%s",s,arr[i].name);//构建绝对路径
+            sprintf(road,"%s/%s",FTPFILEROAD,arr[i].name);//构建绝对路径
         } 
         while(cmp(road,roadx));
         do {
             j--;
-            sprintf(road,"%s/%s",s,arr[j].name);//构建绝对路径
+            sprintf(road,"%s/%s",FTPFILEROAD,arr[j].name);//构建绝对路径
         } 
         while(cmp(roadx,road));
         if(i<j) //swap(arr[i],arr[j])
@@ -348,8 +368,8 @@ void msort(struct my_dr *arr,int l,int r,char *s)
             arr[j]=tmp;
         }
     }
-    msort(arr, l, j, s);
-    msort(arr, j + 1, r, s);
+    msort(arr, l, j);
+    msort(arr, j + 1, r);
 }
 
 void readctor::LIST(event * ev){
@@ -380,10 +400,30 @@ void readctor::LIST(event * ev){
     std::string str;
     char buf[4096];
     sprintf(buf,"%d",cnt);
-    msort(arr,0,cnt-1,FTPFILEROAD);   //按时间排序
-
+    msort(arr,0,cnt-1);   //按时间排序
+    str = buf;
+    sendMsg(str,ev->datafd);
+    str.clear();
     for(int i = 0; i < cnt; i++){
-        
+        if(strcmp(arr[i].name,".") == 0 || strcmp(arr[i].name,"..") == 0) continue;
+        //对于每个文件，取出文件名、文件大小、上传时间
+        struct stat st;
+        char road[max_road];
+        sprintf(road,"%s/%s",FTPFILEROAD,arr[i].name);//构建绝对路径
+        if(lstat(road,&st)==-1){//获取文件状态
+            perror("stat");//处理错误返回值
+            return;
+        }
+        //准备需输出的信息
+        memset(road, 0, sizeof road);
+        time_t mtime = st.st_mtime;
+        struct tm * stm = localtime(&mtime);
+        sprintf(road,"%-12s%15ldk %24d月 %2d日 %02d:%02d\n",arr[i].name,st.st_size,stm->tm_mon+1,stm->tm_mday,stm->tm_hour,stm->tm_min);
+        printf("%-12s%15ldk %24d月 %2d日 %02d:%02d\n",arr[i].name,st.st_size,stm->tm_mon+1,stm->tm_mday,stm->tm_hour,stm->tm_min);
+        //发送给客户端
+        str = road;
+        sendMsg(str,ev->datafd);
+        str.clear();
     }
 }
 
@@ -397,10 +437,16 @@ void readctor::RETR(event * ev){
 
 void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
     printf("datapth run start\n");
+
+    printf("data_pth 准备抢 pthlock\n");
     pthread_mutex_lock(&ev->pthlock);
+    printf("data_pth 抢到 pthlock\n");
+
     ev->pthready = true;
     pthread_cond_signal(&ev->pthcond);
     pthread_mutex_unlock(&ev->pthlock); // 解锁
+    printf("data_pth 解开 pthlock\n");
+
     printf("datafd[%d]: 阻塞等待客户端连接\n",ev->lisfd);
     ev->datafd = accept(ev->lisfd,NULL, NULL);
     if(ev->datafd == -1){
@@ -410,10 +456,15 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
     else printf("已成功连接!\n");
     ev->dataready = false;
     while(1){
+
         //上两把锁
+        printf("data_pth 准备抢 pthlock\n");
         pthread_mutex_lock(&ev->pthlock);
 
+        printf("data_pth 准备抢 datalock\n");
         pthread_mutex_lock(&ev->datalock);
+        printf("data_pth 抢到 datalock (ev->dataready:%d)\n",ev->dataready);
+
         while(!ev->dataready){
             pthread_cond_wait(&ev->datacond, &ev->datalock);
         }
@@ -427,14 +478,23 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
             pthread_mutex_unlock(&ev->datalock);
             //已经运行完，通知处理回调函数
             pthread_mutex_unlock(&ev->pthlock); // 解锁
+            printf("data_pth EXIT 解开所有锁\n");
             return;
         }
         else if(strcmp(ev->buf,"LIST")  == 0){
             th->LIST(ev);
-            //解数据锁
-            pthread_mutex_unlock(&ev->datalock);
             //已经运行完，通知处理回调函数
             pthread_mutex_unlock(&ev->pthlock); // 解锁
+            //解数据锁
+            pthread_mutex_unlock(&ev->datalock);
+            printf("data_pth LIST 解开所有锁\n");
+
+            pthread_mutex_lock(&ev->splock);
+            while(!ev->spready){
+                pthread_cond_wait(&ev->spcond, &ev->splock);
+            }
+            ev->spready = false;
+            pthread_mutex_unlock(&ev->splock);
         }
         ev->dataready = false;
     }
@@ -450,22 +510,31 @@ void readctor::senddata(int fd,int tmp, void * arg){
     }
     else{
         //给数据传输线程发信号，有新事件需要处理
+        printf("senddata 准备抢 datalock\n");
         pthread_mutex_lock(&ev->datalock);
+        pthread_mutex_lock(&ev->splock);
+        printf("senddata 抢到 datalock\n");
+
         ev->dataready = true;
         pthread_cond_signal(&ev->datacond);
         pthread_mutex_unlock(&ev->datalock); // 解锁
+        printf("senddata 解开 datalock\n");
+
+        printf("senddata 准备抢 pthlock\n");
+        pthread_mutex_lock(&ev->pthlock);//抢线程预备锁，确保数据传输线程运行完
+        printf("senddata 抢到 pthlock\n");//发信号通知抢到了
+        pthread_cond_signal(&ev->spcond);
+        pthread_mutex_unlock(&ev->splock);
+
+
+        ev->pthready = false;
+        pthread_mutex_unlock(&ev->pthlock);//解锁
+        printf("senddata 解开 pthlock\n");
 
     }
-    
-    pthread_mutex_lock(&ev->pthlock);//抢线程预备锁，确保数据传输线程运行完
-    //while(!ev->pthready){
-    //    pthread_cond_wait(&ev->pthcond, &ev->pthlock);
-    //}//出循环，即数据线程已处理完
-    ev->pthready = false;
-    pthread_mutex_unlock(&ev->pthlock);//解锁
-
-
+    printf("senddata 准备抢 event_mutex\n");
     pthread_mutex_lock(&event_mutex); // 修改红黑树公共区域，加事件锁
+    printf("senddata 抢到 event_mutex\n");
    
     eventdel(ev);
     
@@ -474,6 +543,7 @@ void readctor::senddata(int fd,int tmp, void * arg){
     eventadd(EPOLLIN, ev);   
 
     pthread_mutex_unlock(&event_mutex); // 解锁
+    printf("senddata 解除 event_mutex\n");
 
 }
 
@@ -483,9 +553,13 @@ void readctor::recvdata(int fd, int events, void*arg){
     event *ev = (event *) arg;
     int len;
     std::string str;
+    printf("recvdata 准备 recvMsg\n");
     int ret = recvMsg(str, fd);
 
+    printf("recvdata 准备抢 event_mutex\n");
     pthread_mutex_lock(&event_mutex); // 加锁
+    printf("recvdata 抢到 event_mutex\n");
+
     if(ret == -1){//失败处理
         close(ev->fd);
         printf("recvMsg[fd = %d] error[%d]:%s\n",fd,errno,strerror(errno));
@@ -515,6 +589,8 @@ void readctor::recvdata(int fd, int events, void*arg){
     }
 
     pthread_mutex_unlock(&event_mutex); // 解锁
+    printf("recvdata 解除 event_mutex\n");
+
 }
 
 //初始化事件
@@ -533,9 +609,14 @@ void readctor::eventset(event * ev, int fd, void (readctor::* call_back)(int ,in
         pthread_mutex_init(&ev->datalock, NULL);
         pthread_cond_init(&ev->datacond, NULL);
         
+        pthread_mutex_init(&ev->splock, NULL);
+        pthread_cond_init(&ev->spcond, NULL);
+
         ev->lockinit = true;
     }
 
+    ev->poolrs = false;
+    
     /*
     ev->pthlock = PTHREAD_MUTEX_INITIALIZER;
     ev->pthcond = PTHREAD_COND_INITIALIZER;
@@ -594,7 +675,7 @@ void readctor::InitListenSocket(unsigned short port){
 
     bind(lfd,(sockaddr *)&addr, sizeof addr);
 
-    listen(lfd, 20);
+    listen(lfd, 100);
 
     eventset(&r_events[MAX_EVENTS], lfd, &readctor::acceptconn, &r_events[MAX_EVENTS]);
     eventadd(EPOLLIN, &r_events[MAX_EVENTS]);
@@ -604,6 +685,7 @@ void readctor::InitListenSocket(unsigned short port){
 
 void readctor::readctorinit(unsigned short port){
     pthread_mutex_init(&event_mutex,NULL);
+    signal(SIGPIPE, SIG_IGN); 
     epfd = epoll_create(MAX_EVENTS + 1);            //定义最大节点数为MAX_EVENTS + 1的红黑树
     if(epfd <= 0)
         printf("epfd create is error, epfd : %d\n", epfd);
@@ -635,32 +717,30 @@ void readctor::readctorinit(unsigned short port){
         //监听红黑树epfd，将满足的事件的文件描述符加至events数组中，1秒没有文件满足，则返回0
         int nfd = epoll_wait(epfd, events, MAX_EVENTS + 1, 1000); 
         if(nfd < 0){
-            printf("epoll_wait error\n");
-            break;
+            printf("epoll_wait error :%s\n",strerror(errno));
+            continue;
         }
 
         for(i = 0; i < nfd; i++){
             event *ev = (event *) events[i].data.ptr;
             //读事件，调用读回调
-            if((events[i].events & EPOLLIN) && (ev -> events & EPOLLIN)){
-                //printf("触发读回调监听:i(%d)\n",i);
-                //struct EventContext ctx = {ev,this};
-                struct EventContext* ctx = (struct EventContext*)malloc(sizeof (struct EventContext));
-                ctx->ev = ev;
-                ctx->obj = this;
-                evq.push(ctx);
-                pthpool.PushTask(event_callback_wrapper, ctx);
-            }
-            //写事件，调用写回调
-            if((events[i].events & EPOLLOUT) && (ev -> events & EPOLLOUT)){
-                //printf("触发写回调监听:i(%d)\n",i);
-                /*auto ctx = new EventContext{ev, this};
-                pthpool.PushTask(event_callback_wrapper, ctx);*/
-                struct EventContext* ctx = (struct EventContext*)malloc(sizeof (struct EventContext));
-                ctx->ev = ev;
-                ctx->obj = this;
-                evq.push(ctx);
-                pthpool.PushTask(event_callback_wrapper, ctx);
+            if(!ev->poolrs){
+                ev->poolrs = true;
+                if((events[i].events & EPOLLIN) && (ev -> events & EPOLLIN)){
+                    struct EventContext* ctx = (struct EventContext*)malloc(sizeof (struct EventContext));
+                    ctx->ev = ev;
+                    ctx->obj = this;
+                    evq.push(ctx);
+                    pthpool.PushTask(event_callback_wrapper, ctx);
+                }
+                //写事件，调用写回调
+                if((events[i].events & EPOLLOUT) && (ev -> events & EPOLLOUT)){
+                    struct EventContext* ctx = (struct EventContext*)malloc(sizeof (struct EventContext));
+                    ctx->ev = ev;
+                    ctx->obj = this;
+                    evq.push(ctx);
+                    pthpool.PushTask(event_callback_wrapper, ctx);
+                }
             }
         }
     }
