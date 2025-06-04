@@ -195,7 +195,7 @@ bool FTPClient::LIST(){
   for(int i = 0; i < cnt; i++){
     ret = datasock->recvMsg(str);
     if(ret == -1) printf("recv file information error:%s\n",strerror(errno));
-    printf("%s\n",str.c_str());
+    printf("%s",str.c_str());
     str.clear();
   }
 

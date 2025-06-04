@@ -26,7 +26,7 @@
 #define BUFLEN 4096
 #define SERV_PORT 1145
 #define MAX_PORT 65535      //端口上限
-#define DATASENDIP "10.30.0.149"
+#define DATASENDIP "192.168.110.3"
 #define FTPFILEROAD "/home/jianger/codes/FTPserver/server/FTPfile"
 #define max_road 4096
 
