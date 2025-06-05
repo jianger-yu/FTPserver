@@ -198,8 +198,20 @@ bool FTPClient::LIST(){
     printf("%s",str.c_str());
     str.clear();
   }
-
   return true;
+}
+
+bool FTPClient::RETR(){
+  Socket* sock = this->getSocket();
+  std::string str = "RETR";
+  int ret = sock->sendMsg(str);
+  if(ret == -1){
+    printf("send 'RETR' command error:%s\n",strerror(errno));
+    exit(1);
+  }
+  str.clear();
+
+
 }
 
 void FTPClient::ctlthread(void){
@@ -234,6 +246,13 @@ void FTPClient::ctlthread(void){
       if(this->pasv == true && lscnt == 0){
         this->LIST();
         if(!lscnt) lscnt++;
+      }
+      continue;
+    }
+    else if(strcmp(buf,"RETR") == 0){
+      if(this->pasv == true){
+        this->RETR();
+        this->EXIT();
       }
       continue;
     }
