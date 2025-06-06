@@ -211,7 +211,9 @@ bool FTPClient::RETR(){
   }
   str.clear();
 
+  //下载文件
 
+  
 }
 
 void FTPClient::ctlthread(void){
