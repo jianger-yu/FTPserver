@@ -127,7 +127,7 @@ bool FTPClient::PASV(){
   sigaction(SIGALRM,&act,NULL);
 
   //读取ip及端口号,形如：227 entering passive mode (h1,h2,h3,h4,p1,p2)，其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
-  ret = sock->recvMsg(str);
+  sock->recvMsg(str);
   //alarm(0);
   //printf("recv string :%s\n",str.c_str());
   short newport = 0;
@@ -135,7 +135,7 @@ bool FTPClient::PASV(){
 
   //将数据转化为可用的变量
   trans(str, newip, newport);
-  //printf("ip:%s  port:%d\n",newip.c_str(), newport);
+  printf("ip:%s  port:%d\n",newip.c_str(), newport);
 
   
   //连接主机
@@ -212,8 +212,52 @@ bool FTPClient::RETR(){
   str.clear();
 
   //下载文件
+  //输出指引
+  printf("输入要下载文件的文件名:>");
+  fflush(stdout); // 手动刷新标准输出缓冲区
 
+  char buf[1024];
+  memset(buf,0,sizeof buf);
+  //获取输入文件名
+  ret = read(STDIN_FILENO,buf,sizeof buf);
+  if(ret <= 0){
+    printf("输入错误:%s\n",strerror(errno));
+    exit(1);
+  }
+  buf[ret - 1] = '\0';
+  printf("输入成功:%s\n",buf);
+  //获取数据传输套接字
+  Socket* datasock = dataclient.getSocket();
+  str = buf;
+  ret = datasock->sendMsg(str);
+  if(ret == -1){
+    printf("send file name error:%s\n",strerror(errno));
+    exit(1);
+  }
+  str.clear();
+  printf("已文件名发送至数据套接字\n");
   
+  //获取文件
+  ret = datasock->recvMsg(str);
+  printf("读取服务器传输成功：%s\n",str.c_str());
+  if(ret == -1){
+    printf("recv file_send count error:%s\n",strerror(errno));
+    exit(1);
+  }  
+  if(strcmp(str.c_str(), "450 Requested file action not taken.") == 0 || strcmp(str.c_str(), "no search file.") == 0){
+    printf("未找到该文件，已为您退出连接\n");
+    return false;
+  }
+  int tmp;
+  sscanf(str.c_str(),"%d",&tmp);
+  FILE * file = fopen(buf, "wb");
+  char buffer[4096];
+  for(int j = 0; j < tmp; j++){
+    str.clear();
+    datasock->recvMsg(str);
+    fwrite(str.c_str(), 1, 4096, file);
+  }
+  return true;
 }
 
 void FTPClient::ctlthread(void){
@@ -253,8 +297,13 @@ void FTPClient::ctlthread(void){
     }
     else if(strcmp(buf,"RETR") == 0){
       if(this->pasv == true){
+        system("clear");  
+        this->LIST();
         this->RETR();
-        this->EXIT();
+        dataclient.~FTPClient();
+        dataclient.reinitialize();
+        this->pasv = false;
+        //this->EXIT();
       }
       continue;
     }

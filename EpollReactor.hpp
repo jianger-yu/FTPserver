@@ -26,7 +26,7 @@
 #define BUFLEN 4096
 #define SERV_PORT 1145
 #define MAX_PORT 65535      //端口上限
-#define DATASENDIP "192.168.110.3"
+#define DATASENDIP "10.30.0.149"
 #define FTPFILEROAD "/home/jianger/codes/FTPserver/server/FTPfile"
 #define max_road 4096
 
@@ -432,7 +432,93 @@ void readctor::STOR(event * ev){
 }
 
 void readctor::RETR(event * ev){
-    
+    printf("RETR run!\n");
+    std::string str;
+    int ret = recvMsg(str, ev->datafd);
+    if(ret == -1){//失败处理
+        printf("RETR error :%s\n",strerror(errno));
+        exit(1);
+    }
+    printf("读到内容：%s\n",str.c_str());
+    DIR* dp;
+    struct dirent* di;
+    struct my_dr *arr=(struct my_dr *)malloc(sizeof(struct my_dr )*20);//开辟动态数组
+    if(arr == NULL){//处理错误返回值
+        perror("malloc");
+        exit(1);
+    }
+    int cnt = 0,size = 20;
+    //打开目录
+    dp = opendir(FTPFILEROAD);
+    if(dp == NULL){//处理错误返回值
+        perror("opendir");
+        exit(1);
+    }
+    //读目录
+    while((di = readdir(dp)) != NULL){
+        if(cnt>=size){//扩容
+            size*=2;
+            arr=(struct my_dr *)realloc(arr,sizeof(struct my_dr )*size);
+        }
+        strcpy(arr[cnt].name,di->d_name);//数组存储
+        arr[cnt++].ino=di->d_ino;
+    }
+    //在arr中寻找与用户输入一致的文件名
+    bool key = false; //true表示成功找到
+    int i;
+    for(i = 0; i < cnt; i++){
+        if(strcmp(arr[i].name, str.c_str()) == 0){
+            key = true;
+            printf("找到对应文件\n");
+            break;  
+        }
+    }
+    if(key == false){
+        sendMsg("no search file.", ev->datafd);
+        printf("no search file.\n");
+        free(arr);
+        closedir(dp);
+        return;
+    }
+    //获取文件状态
+    struct stat st;
+    char road[max_road];
+    sprintf(road,"%s/%s",FTPFILEROAD,arr[i].name);//构建绝对路径
+    if(lstat(road,&st)==-1){//获取文件状态
+        perror("stat");//处理错误返回值
+        return;
+    }
+    //判断需要分几次传输
+    char buf[4096];//一次发送4k
+    int tmp = st.st_size / 4;
+    if(st.st_size % 4 != 0) tmp++;
+    //打开文件，依次输出
+    FILE* file = fopen(road, "rb");
+    if (file == NULL) {
+        perror("fopen");
+        sendMsg("450 Requested file action not taken.", ev->datafd);
+        free(arr);
+        closedir(dp);
+        return;
+    }
+    //发送需要传输的次数
+    str.clear();
+    char tmps[30];
+    sprintf(tmps,"%d",tmp);
+    str = tmps;
+    sendMsg(str, ev->datafd);
+
+    size_t bytesRead;
+    while ((bytesRead = fread(buf, 1, sizeof(buf), file)) > 0) {
+        str.clear();
+        str = buf;
+        sendMsg(str, ev->datafd);
+    }
+
+    //释放资源
+    fclose(file);
+    free(arr);
+    closedir(dp);
 }
 
 void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
@@ -486,12 +572,26 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
         }
         else if(strcmp(ev->buf,"LIST")  == 0){
             tmp = 0;
+            printf("-------------------th:%p",th);
             th->LIST(ev);
             //已经运行完，通知处理回调函数
             pthread_mutex_unlock(&ev->pthlock); // 解锁
             //解数据锁
             pthread_mutex_unlock(&ev->datalock);
             printf("data_pth LIST 解开所有锁\n");
+        }
+        else if(strcmp(ev->buf,"RETR")  == 0){
+            th->RETR(ev);
+            tmp = 1;
+            printf("EXIT start\n");
+            close(ev->datafd);
+            ev->dataready = false;
+            //解数据锁
+            pthread_mutex_unlock(&ev->datalock);
+            //已经运行完，通知处理回调函数
+            pthread_mutex_unlock(&ev->pthlock); // 解锁
+            printf("data_pth RETR 解开所有锁\n");
+
         }
         while(!ev->spready){
             pthread_cond_wait(&ev->spcond, &ev->splock);
