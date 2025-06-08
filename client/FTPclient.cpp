@@ -129,7 +129,7 @@ bool FTPClient::PASV(){
   //读取ip及端口号,形如：227 entering passive mode (h1,h2,h3,h4,p1,p2)，其中端口号为 p1*256+p2，IP 地址为 h1.h2.h3.h4。
   sock->recvMsg(str);
   //alarm(0);
-  //printf("recv string :%s\n",str.c_str());
+  printf("recv string :%s\n",str.c_str());
   short newport = 0;
   std::string newip;
 
@@ -145,8 +145,8 @@ bool FTPClient::PASV(){
     exit(1);
   }
   else{
-    //printf("连接至主机成功！！\n");
-    //sleep(10);
+    printf("连接至主机成功！！\n");
+    sleep(10);
   }
 
   pasv = true;

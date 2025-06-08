@@ -49,6 +49,7 @@ typedef struct event{
     int len;
     //用于监听的文件描述符
     int lisfd;
+    int lisdatafd;
     //用于给客户端传输数据的文件描述符
     int datafd;
     //用于通信的地址结构
@@ -534,8 +535,20 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
     pthread_mutex_unlock(&ev->pthlock); // 解锁
     printf("data_pth 解开 pthlock\n");
 
-    printf("datafd[%d]: 阻塞等待客户端连接\n",ev->lisfd);
-    ev->datafd = accept(ev->lisfd,NULL, NULL);
+    //用指定端口连接客户端
+    int ldatafd = socket(AF_INET, SOCK_STREAM, 0);
+    printf("datafd[%d]: 阻塞等待客户端连接(port:%d)\n",ldatafd, port);
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+
+    bind(ldatafd,(sockaddr *)&addr, sizeof addr);
+
+    listen(ldatafd, 100);
+
+    ev->datafd = accept(ldatafd,NULL, NULL);
     if(ev->datafd == -1){
         printf("accept [%d] error:%s\n",ev->lisfd, strerror(errno));
         return;
