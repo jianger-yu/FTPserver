@@ -433,8 +433,10 @@ void readctor::STOR(event * ev){
 }
 
 void readctor::RETR(event * ev){
-    printf("RETR run!\n");
+    printf("RETR run! ev->datafd = %d\n", ev->datafd);
+
     std::string str;
+    printf("准备从 datafd[%d] 接收文件名...\n", ev->datafd);
     int ret = recvMsg(str, ev->datafd);
     if(ret == -1){//失败处理
         printf("RETR error :%s\n",strerror(errno));
@@ -536,24 +538,31 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
     printf("data_pth 解开 pthlock\n");
 
     //用指定端口连接客户端
-    int ldatafd = socket(AF_INET, SOCK_STREAM, 0);
-    printf("datafd[%d]: 阻塞等待客户端连接(port:%d)\n",ldatafd, port);
+    /*int ldatafd = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+    setsockopt(ldatafd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof addr);
-    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
 
-    bind(ldatafd,(sockaddr *)&addr, sizeof addr);
+    //bind(ldatafd,(sockaddr *)&addr, sizeof addr);
+    if (bind(ldatafd, (sockaddr *)&addr, sizeof addr) == -1) {
+        perror("bind error");
+        return;
+    }
+    listen(ldatafd, 100);*/
+    
+    printf("datafd[%d]: 阻塞等待客户端连接(port:%d)\n",ev->lisfd, port);
 
-    listen(ldatafd, 100);
-
-    ev->datafd = accept(ldatafd,NULL, NULL);
+    ev->datafd = accept(ev->lisfd,NULL, NULL);
     if(ev->datafd == -1){
         printf("accept [%d] error:%s\n",ev->lisfd, strerror(errno));
         return;
     }
     else printf("已成功连接!\n");
+    
     ev->dataready = false;
     while(1){
 

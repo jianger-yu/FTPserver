@@ -146,7 +146,7 @@ bool FTPClient::PASV(){
   }
   else{
     printf("连接至主机成功！！\n");
-    sleep(10);
+    //sleep(10);
   }
 
   pasv = true;
@@ -234,9 +234,10 @@ bool FTPClient::RETR(){
     printf("send file name error:%s\n",strerror(errno));
     exit(1);
   }
+  printf("[Client] 发送文件名 : %s\n", str.c_str());
   str.clear();
-  printf("已文件名发送至数据套接字\n");
-  
+
+  sleep(5);
   //获取文件
   ret = datasock->recvMsg(str);
   printf("读取服务器传输成功：%s\n",str.c_str());
