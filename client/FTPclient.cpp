@@ -265,8 +265,9 @@ bool FTPClient::RETR(){
     else
       fwrite(str.data(), 1, endrt, file);
   }
+  fflush(file);
   printf("下载成功！正在为您退出当前模式\n");
-  exit(1);
+  //exit(1);
   //str = "success";
   //datasock->sendMsg(str);
   return true;
@@ -312,6 +313,14 @@ void FTPClient::ctlthread(void){
         system("clear");  
         this->LIST();
         this->RETR();
+        this->EXIT();
+        //this->EXIT();
+      }
+      continue;
+    }
+    else if(strcmp(buf,"STOR") == 0){
+      if(this->pasv == true){
+        this->STOR();
         this->EXIT();
         //this->EXIT();
       }

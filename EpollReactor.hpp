@@ -516,9 +516,9 @@ void readctor::RETR(event * ev){
     size_t bytesRead;
     while ((bytesRead = fread(buf, 1, sizeof(buf), file)) > 0) {
         str.clear();
-        str = buf;
+        str.assign(buf, bytesRead); 
         sendMsg(str, ev->datafd);
-        memset(buf, 0, sizeof buf);
+        //memset(buf, 0, sizeof buf);
     }
     /*while(1){
         str.clear();
