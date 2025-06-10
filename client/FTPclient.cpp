@@ -1,4 +1,5 @@
 #include "client.h"
+#include <algorithm>
 #include "../socket/socket.h"
 #include "../EpollReactor.hpp"
 
@@ -250,6 +251,7 @@ bool FTPClient::RETR(){
     return false;
   }
   printf("正在下载文件...\n");
+  
   int tmp;
   long endrt;
   sscanf(str.c_str(),"%dand%ld",&tmp, &endrt);
@@ -270,6 +272,96 @@ bool FTPClient::RETR(){
   //exit(1);
   //str = "success";
   //datasock->sendMsg(str);
+  return true;
+}
+std::string GetFileName(const char arr[]){
+  int i = strlen(arr) - 1;
+  std::string str;
+  for(;i >= 0; i--){
+    if(arr[i] == '/') break;
+    else str.push_back(arr[i]);
+  }
+  std::reverse(str.begin(), str.end());
+  return str;
+}
+bool FTPClient::STOR(){
+  Socket* sock = this->getSocket();
+  std::string str = "STOR";
+  int ret = sock->sendMsg(str);
+  if(ret == -1){
+    printf("send 'STOR' command error:%s\n",strerror(errno));
+    exit(1);
+  }
+  str.clear();
+  //下载文件
+  //输出指引
+  char arr[1024];
+  char path[3072];
+  FILE* file;
+  printf("输入需要传输的文件路径:>");
+  while(1){
+    fflush(stdout); // 手动刷新标准输出缓冲区
+
+    memset(arr,0,sizeof arr);
+    //获取输入文件名
+    ret = read(STDIN_FILENO,arr,sizeof arr);
+    if(ret <= 0){
+      printf("输入错误:%s\n",strerror(errno));
+      exit(1);
+    }
+    arr[ret - 1] = '\0';
+
+    char *pa = NULL;
+    pa = getcwd(NULL, 0);
+    //若不为绝对路径，拼接路径
+    if(arr[0]!='/')
+      sprintf(path,("%s/%s"),pa,arr);
+    //若为绝对路径，直接传入路径
+    else strcpy(path,arr);
+    file = fopen(path, "rb");
+    if (file == NULL) {
+      system("clear");
+      menu();
+      printf("STOR\n路径有误,请重新输入:>\n");
+      continue;
+    }
+    else break;
+   }
+  printf("输入成功:%s\n",arr);
+  printf("正在上传文件...\n");
+  //获取数据传输套接字
+  Socket* datasock = dataclient.getSocket();
+  //发送文件名
+  str.clear();
+  str = GetFileName(arr);
+  datasock->sendMsg(str);
+
+  //获取文件状态
+  struct stat st;
+  if(lstat(path,&st) == -1){//获取文件状态
+      perror("stat");//处理错误返回值
+      exit(1);
+  }
+  //判断需要分几次传输
+  char buf[4096];//一次发送4k
+  int tmp = st.st_size / sizeof buf;
+  //if(st.st_size % 4 != 0) tmp++;
+  printf("文件大小:%ld  发送文件块数tmp == %d, endrt == %ld\n",st.st_size,tmp,(st.st_size + 4096)%4096);
+  //发送需要传输的次数
+  str.clear();
+  char tmps[30];
+  sprintf(tmps,"%dand%ld",tmp,(st.st_size + 4096)%4096);
+  str = tmps;
+  datasock->sendMsg(str);
+
+  size_t bytesRead;
+  while ((bytesRead = fread(buf, 1, sizeof(buf), file)) > 0) {
+      str.clear();
+      str.assign(buf, bytesRead); 
+      datasock->sendMsg(str);
+      //memset(buf, 0, sizeof buf);
+  }
+  printf("上传成功！\n");
   return true;
 }
 

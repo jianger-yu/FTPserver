@@ -216,7 +216,10 @@ bool recv_all(int sockfd,void * buf,size_t len){
     do {
         n = recv(sockfd,p,len,0);
         if (n > 0) { p += n; len -= n; }
-        else if (n == 0) break; // 对端关闭
+        else if (n == 0) {
+            len = 0;
+            break; // 对端关闭
+        }
         else if (errno != EAGAIN && errno != EWOULDBLOCK) return false;
         if(len == 0) break;
     }
@@ -429,10 +432,6 @@ void readctor::LIST(event * ev){
     }
 }
 
-void readctor::STOR(event * ev){
-    
-}
-
 void readctor::RETR(event * ev){
     printf("RETR run! ev->datafd = %d\n", ev->datafd);
 
@@ -534,6 +533,46 @@ void readctor::RETR(event * ev){
     closedir(dp);
 }
 
+
+
+void readctor::STOR(event * ev){
+    char fname[1000];
+    char path[1024];
+    std::string str;
+    //读文件名
+    int ret = recvMsg(str, ev->datafd);
+    strcpy(fname, str.data());
+    printf("读到文件名:%s\n", fname);
+    if(ret == -1){//失败处理
+        printf("RETR error :%s\n",strerror(errno));
+        exit(1);
+    }
+
+    //读需要分几次传输
+    int tmp;
+    long endrt;
+    str.clear();
+    ret = recvMsg(str, ev->datafd);
+    sscanf(str.c_str(),"%dand%ld",&tmp, &endrt);
+    printf("tmp == %d, endrt == %ld\n", tmp, endrt);
+    sprintf(path, "FTPfile/%s", fname);
+    FILE * file = fopen(path, "wb");
+
+    //开始传输文件
+    for(int j = 0; j <= tmp; j++){
+        if(j == tmp && endrt == 0) j++;
+        str.clear();
+        recvMsg(str, ev->datafd);
+        if(j < tmp)
+            fwrite(str.data(), 1, 4096, file);
+        else
+            fwrite(str.data(), 1, endrt, file);
+    }
+    fflush(file);
+    printf("上传成功\n");
+
+}
+
 void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
     int tmp = 1;
     printf("datapth run start\n");
@@ -598,15 +637,20 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
         else if(strcmp(ev->buf,"RETR")  == 0){
             th->RETR(ev);
             tmp = 0;
-            /*printf("EXIT start\n");
-            close(ev->datafd);
-            ev->dataready = false;*/
             //解数据锁
             pthread_mutex_unlock(&ev->datalock);
             //已经运行完，通知处理回调函数
             pthread_mutex_unlock(&ev->pthlock); // 解锁
             printf("data_pth RETR 解开所有锁\n");
-
+        }
+        else if(strcmp(ev->buf,"STOR") == 0){
+            th->STOR(ev);
+            tmp = 0;
+            //解数据锁
+            pthread_mutex_unlock(&ev->datalock);
+            //已经运行完，通知处理回调函数
+            pthread_mutex_unlock(&ev->pthlock); // 解锁
+            printf("data_pth STOR 解开所有锁\n");
         }
         while(!ev->spready){
             pthread_cond_wait(&ev->spcond, &ev->splock);
