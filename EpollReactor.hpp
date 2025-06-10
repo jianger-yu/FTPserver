@@ -26,7 +26,7 @@
 #define BUFLEN 4096
 #define SERV_PORT 1145
 #define MAX_PORT 65535      //端口上限
-#define DATASENDIP "10.30.0.149"
+#define DATASENDIP "127.0.0.1"
 #define FTPFILEROAD "/home/jianger/codes/FTPserver/server/FTPfile"
 #define max_road 4096
 
@@ -218,6 +218,7 @@ bool recv_all(int sockfd,void * buf,size_t len){
         if (n > 0) { p += n; len -= n; }
         else if (n == 0) break; // 对端关闭
         else if (errno != EAGAIN && errno != EWOULDBLOCK) return false;
+        if(len == 0) break;
     }
     while(n > 0);
     //if(!(errno == EAGAIN || errno == EWOULDBLOCK)) return false; 
@@ -419,8 +420,8 @@ void readctor::LIST(event * ev){
         memset(road, 0, sizeof road);
         time_t mtime = st.st_mtime;
         struct tm * stm = localtime(&mtime);
-        sprintf(road,"%-12s%15ldk %24d月 %2d日 %02d:%02d\n",arr[i].name,st.st_size,stm->tm_mon+1,stm->tm_mday,stm->tm_hour,stm->tm_min);
-        printf("%-12s%15ldk %24d月 %2d日 %02d:%02d\n",arr[i].name,st.st_size,stm->tm_mon+1,stm->tm_mday,stm->tm_hour,stm->tm_min);
+        sprintf(road,"%-12s%15ldb %24d月 %2d日 %02d:%02d\n",arr[i].name,st.st_size,stm->tm_mon+1,stm->tm_mday,stm->tm_hour,stm->tm_min);
+        printf("%-12s%15ldb %24d月 %2d日 %02d:%02d\n",arr[i].name,st.st_size,stm->tm_mon+1,stm->tm_mday,stm->tm_hour,stm->tm_min);
         //发送给客户端
         str = road;
         sendMsg(str,ev->datafd);
@@ -493,8 +494,9 @@ void readctor::RETR(event * ev){
     }
     //判断需要分几次传输
     char buf[4096];//一次发送4k
-    int tmp = st.st_size / 4;
-    if(st.st_size % 4 != 0) tmp++;
+    int tmp = st.st_size / sizeof buf;
+    //if(st.st_size % 4 != 0) tmp++;
+    printf("文件大小:%ld  发送文件块数tmp == %d, endrt == %ld\n",st.st_size,tmp,(st.st_size + 4096)%4096);
     //打开文件，依次输出
     FILE* file = fopen(road, "rb");
     if (file == NULL) {
@@ -507,7 +509,7 @@ void readctor::RETR(event * ev){
     //发送需要传输的次数
     str.clear();
     char tmps[30];
-    sprintf(tmps,"%d",tmp);
+    sprintf(tmps,"%dand%ld",tmp,(st.st_size + 4096)%4096);
     str = tmps;
     sendMsg(str, ev->datafd);
 
@@ -516,7 +518,15 @@ void readctor::RETR(event * ev){
         str.clear();
         str = buf;
         sendMsg(str, ev->datafd);
+        memset(buf, 0, sizeof buf);
     }
+    /*while(1){
+        str.clear();
+        printf("准备读取回应\n");
+        int ret = recvMsg(str, ev->datafd);
+        printf("收到回应：%s\n",str.c_str());
+        if(strcmp(str.c_str(), "success") == 0) break;
+    }*/
 
     //释放资源
     fclose(file);
@@ -536,23 +546,6 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
     pthread_cond_signal(&ev->pthcond);
     pthread_mutex_unlock(&ev->pthlock); // 解锁
     printf("data_pth 解开 pthlock\n");
-
-    //用指定端口连接客户端
-    /*int ldatafd = socket(AF_INET, SOCK_STREAM, 0);
-    int opt = 1;
-    setsockopt(ldatafd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof addr);
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-
-    //bind(ldatafd,(sockaddr *)&addr, sizeof addr);
-    if (bind(ldatafd, (sockaddr *)&addr, sizeof addr) == -1) {
-        perror("bind error");
-        return;
-    }
-    listen(ldatafd, 100);*/
     
     printf("datafd[%d]: 阻塞等待客户端连接(port:%d)\n",ev->lisfd, port);
 
@@ -604,10 +597,10 @@ void readctor::data_pth(readctor::event * ev,unsigned short port, readctor* th){
         }
         else if(strcmp(ev->buf,"RETR")  == 0){
             th->RETR(ev);
-            tmp = 1;
-            printf("EXIT start\n");
+            tmp = 0;
+            /*printf("EXIT start\n");
             close(ev->datafd);
-            ev->dataready = false;
+            ev->dataready = false;*/
             //解数据锁
             pthread_mutex_unlock(&ev->datalock);
             //已经运行完，通知处理回调函数

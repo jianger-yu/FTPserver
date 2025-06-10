@@ -237,7 +237,7 @@ bool FTPClient::RETR(){
   printf("[Client] 发送文件名 : %s\n", str.c_str());
   str.clear();
 
-  sleep(5);
+  //sleep(5);
   //获取文件
   ret = datasock->recvMsg(str);
   printf("读取服务器传输成功：%s\n",str.c_str());
@@ -249,15 +249,26 @@ bool FTPClient::RETR(){
     printf("未找到该文件，已为您退出连接\n");
     return false;
   }
+  printf("正在下载文件...\n");
   int tmp;
-  sscanf(str.c_str(),"%d",&tmp);
+  long endrt;
+  sscanf(str.c_str(),"%dand%ld",&tmp, &endrt);
+  printf("tmp == %d, endrt == %ld\n", tmp, endrt);
   FILE * file = fopen(buf, "wb");
-  char buffer[4096];
-  for(int j = 0; j < tmp; j++){
+  //rewind(file);
+  for(int j = 0; j <= tmp; j++){
+    if(j == tmp && endrt == 0) j++;
     str.clear();
     datasock->recvMsg(str);
-    fwrite(str.c_str(), 1, 4096, file);
+    if(j < tmp)
+      fwrite(str.data(), 1, 4096, file);
+    else
+      fwrite(str.data(), 1, endrt, file);
   }
+  printf("下载成功！正在为您退出当前模式\n");
+  exit(1);
+  //str = "success";
+  //datasock->sendMsg(str);
   return true;
 }
 
@@ -301,9 +312,7 @@ void FTPClient::ctlthread(void){
         system("clear");  
         this->LIST();
         this->RETR();
-        dataclient.~FTPClient();
-        dataclient.reinitialize();
-        this->pasv = false;
+        this->EXIT();
         //this->EXIT();
       }
       continue;
