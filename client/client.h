@@ -71,6 +71,8 @@ class FTPClient {
   // 通信类对象
   std::unique_ptr<Socket> socket_;
 
+  int tip;
+
   //数据传输套接字
   //int datafd;
   //数据传输类对象

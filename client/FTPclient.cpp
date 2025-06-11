@@ -8,7 +8,7 @@ FTPClient dataclient;
 
 FTPClient::FTPClient()
     : fd_(socket(AF_INET, SOCK_STREAM, 0)),
-      socket_(std::make_unique<Socket>(fd_)),pasv(false){}
+      socket_(std::make_unique<Socket>(fd_)),pasv(false),tip(0){}
 
 FTPClient::~FTPClient() {
   close(fd_);
@@ -40,25 +40,29 @@ void *read_clit(void * fd){
 }
 
 void FTPClient::menu(){
-  printf("==========================================================\n");
-  printf("           欢迎进入FTP服务器,请选择要进行的操作\n");
+  printf("\033[0;36m==========================================================\033[0m\n");
+  printf("           \033[0;33m欢迎进入FTP服务器,请选择要进行的操作\033[0m\n");
   if(this->pasv == false)
-    printf("   1.PASV  ------------(请求被动模式，获取数据传输端口)\n");
+    printf("   \033[0;32m1.PASV  ------------(请求被动模式，获取数据传输端口)\033[0m\n");
   else
-    printf("   1.EXIT  ------------(回到默认模式)\n");
-  printf("   2.LIST  ------------(获取文件列表)\n");
-  printf("   3.STOR  ------------(上传文件)\n");
-  printf("   4.RETR  ------------(下载文件)\n");
+    printf("   \033[0;32m1.EXIT  ------------(回到默认模式)\033[0m\n");
+  printf("   \033[0;32m2.LIST  ------------(获取文件列表)\033[0m\n");
+  printf("   \033[0;32m3.STOR  ------------(上传文件)\033[0m\n");
+  printf("   \033[0;32m4.RETR  ------------(下载文件)\033[0m\n");
+  printf("   \033[0;32m5.QUIT  ------------(退出服务器)\033[0m\n");
   if(this->pasv == false){
-    printf("                                        当前不为被动模式\n");
-    printf("   tip:使用2~4命令需要进入被动模式                       \n");
+    printf("                                        \033[0;31m当前不为被动模式\033[0m\n");
+    printf("   \033[0;32mtip:使用2~4命令需要进入被动模式\033[0m                       \n");
   }
   else{
-    printf("                                          已进入被动模式\n");
-    printf("   tip:成功进入被动模式，可以进行文件传输\n");
+    printf("                                          \033[0;34m已进入被动模式\033[0m\n");
+    printf("   \033[0;32mtip:成功进入被动模式，可以进行文件传输\033[0m\n");
   }
-  printf("==========================================================\n");
-  printf("请输入命令:>");
+  printf("\033[0;36m==========================================================\033[0m\n");
+  if(tip == 1) printf("\033[0;32m文件下载成功,已为您退出数据连接\033[0m\n");
+  else if(tip == 2) printf("\033[0;32m文件成功上传至服务器,已为您退出数据连接\033[0m\n");
+  else if(tip == 3) printf("\033[0;31m未在服务器列表找到该文件,已为您退出数据连接\033[0m\n");
+  printf("\033[0;32m请输入命令:>\033[0m");
   fflush(stdout); // 手动刷新标准输出缓冲区
 }
 
@@ -189,7 +193,7 @@ bool FTPClient::LIST(){
   str.clear();
   cnt -= 2;
   system("clear");
-  printf("==========================================================\n");
+  printf("\033[0;36m==========================================================\033[0m\n");
   printf("                   服务器内文件清单\n");
   printf("%-12s%27s %33s\n","文件名","文件大小","上传时间");
   //依次读取固定量个文件
@@ -247,7 +251,8 @@ bool FTPClient::RETR(){
     exit(1);
   }  
   if(strcmp(str.c_str(), "450 Requested file action not taken.") == 0 || strcmp(str.c_str(), "no search file.") == 0){
-    printf("未找到该文件，已为您退出连接\n");
+    printf("未在服务器列表找到该文件，已为您退出连接\n");
+    tip = 3;
     return false;
   }
   printf("正在下载文件...\n");
@@ -269,6 +274,7 @@ bool FTPClient::RETR(){
   }
   fflush(file);
   printf("下载成功！正在为您退出当前模式\n");
+  tip = 1;
   //exit(1);
   //str = "success";
   //datasock->sendMsg(str);
@@ -298,19 +304,25 @@ bool FTPClient::STOR(){
   char arr[1024];
   char path[3072];
   FILE* file;
-  printf("输入需要传输的文件路径:>");
+  printf("\033[0;32m输入需要传输的文件路径:>\033[0m");
   while(1){
     fflush(stdout); // 手动刷新标准输出缓冲区
 
     memset(arr,0,sizeof arr);
     //获取输入文件名
     ret = read(STDIN_FILENO,arr,sizeof arr);
+    printf("输入路径为：%s",arr);
     if(ret <= 0){
       printf("输入错误:%s\n",strerror(errno));
       exit(1);
     }
+    if(arr[0] == '\n') {
+      system("clear");
+      menu();
+      printf("STOR\n\033[0;32m路径有误,请重新输入:>\033[0m");
+      continue;
+    }
     arr[ret - 1] = '\0';
-
     char *pa = NULL;
     pa = getcwd(NULL, 0);
     //若不为绝对路径，拼接路径
@@ -322,7 +334,7 @@ bool FTPClient::STOR(){
     if (file == NULL) {
       system("clear");
       menu();
-      printf("STOR\n路径有误,请重新输入:>\n");
+      printf("STOR\n\033[0;32m路径有误,请重新输入:>\033[0m");
       continue;
     }
     else break;
@@ -362,6 +374,7 @@ bool FTPClient::STOR(){
       //memset(buf, 0, sizeof buf);
   }
   printf("上传成功！\n");
+  tip = 2;
   return true;
 }
 
@@ -385,6 +398,7 @@ void FTPClient::ctlthread(void){
     str = buf;
     if(strcmp(buf,"PASV") == 0){
       if(this->pasv == false)
+        tip = 0;
         this->PASV();
       continue;
     }
@@ -414,9 +428,15 @@ void FTPClient::ctlthread(void){
       if(this->pasv == true){
         this->STOR();
         this->EXIT();
-        //this->EXIT();
       }
       continue;
+    }
+    else if(strcmp(buf,"QUIT") == 0){
+      if(this->pasv == true)
+        this->EXIT();
+      client.~FTPClient();
+      printf("\033[0;32m成功退出服务器\033[0m\n");
+      exit(1);
     }
   } 
 }
