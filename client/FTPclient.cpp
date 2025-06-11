@@ -62,6 +62,10 @@ void FTPClient::menu(){
   if(tip == 1) printf("\033[0;32m文件下载成功,已为您退出数据连接\033[0m\n");
   else if(tip == 2) printf("\033[0;32m文件成功上传至服务器,已为您退出数据连接\033[0m\n");
   else if(tip == 3) printf("\033[0;31m未在服务器列表找到该文件,已为您退出数据连接\033[0m\n");
+  else if(tip == 4) {
+    printf("\033[0;31m输入命令非法\033[0m\n");
+    tip = 0;
+  }
   printf("\033[0;32m请输入命令:>\033[0m");
   fflush(stdout); // 手动刷新标准输出缓冲区
 }
@@ -438,10 +442,15 @@ void FTPClient::ctlthread(void){
       printf("\033[0;32m成功退出服务器\033[0m\n");
       exit(1);
     }
+    else tip = 4;
   } 
 }
 
 int main(){
+  sigset_t set;
+  sigaddset(&set,SIGINT);
+  sigaddset(&set,SIGQUIT);
+  sigprocmask(SIG_BLOCK,&set,NULL);
   while(client.connectToHost("127.0.0.1", 2100)==false){
     printf("连接FTP服务器2100端口失败,error:%s\n",strerror(errno));
     printf("正在重新连接...\n");
